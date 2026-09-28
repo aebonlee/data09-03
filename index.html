@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내구시험 일지 정리·기성 집계</title>
+  <meta name="description" content="표준 현황 엑셀을 넣으면 모델별 월 운행시간·연료 소모량·연료비를 계산해 기성용 엑셀을 내려받고, 현황 대시보드와 입력값 검사를 보여 주는 브라우저 도구(1단계 시연판)">
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
+  <header class="site-header">
+    <div class="inner header-inner">
+      <a class="brand" href="#/data">
+        <span class="brand-name">내구시험 일지 정리·기성 집계</span>
+        <span class="brand-sub">현황 엑셀 → 월 운행시간·연료비 → 기성용 엑셀 · 대시보드</span>
+      </a>
+      <nav class="nav" id="nav" aria-label="주 메뉴">
+        <a href="#/data" data-route="data">현황 데이터</a>
+        <a href="#/billing" data-route="billing">월간 기성</a>
+        <a href="#/dashboard" data-route="dashboard">대시보드</a>
+      </nav>
+    </div>
+  </header>
+
+  <div id="sampleBanner" class="sample-banner" hidden>지금 보이는 것은 <strong>예시 데이터</strong>입니다. 실제 시험 기록이 아닌 가상의 값입니다.</div>
+  <div id="storeBanner" class="store-banner" hidden>이 브라우저에서는 저장소를 쓸 수 없어, 창을 닫으면 데이터가 사라집니다. 작업 후 엑셀로 내보내 두세요.</div>
+
+  <main id="main" class="inner main" tabindex="-1"></main>
+
+  <footer class="site-footer">
+    <div class="inner">1단계 시연판 · 파일은 서버로 보내지 않고 이 브라우저 안에서만 계산·저장합니다</div>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="dialog" class="dialog">
+    <form method="dialog" class="dialog-body" id="dialogForm">
+      <h2 id="dialogTitle"></h2>
+      <div id="dialogContent"></div>
+      <div class="dialog-actions" id="dialogActions"></div>
+    </form>
+  </dialog>
+
+  <!-- 로컬 파일(file://)로 열어도 돌도록 module 이 아닌 일반 스크립트로 불러옵니다 -->
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="js/logic.js"></script>
+  <script src="js/sample-data.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
