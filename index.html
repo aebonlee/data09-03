@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>내구시험 일지 정리·기성 집계</title>
-  <meta name="description" content="표준 현황 엑셀을 넣으면 모델별 월 운행시간·연료 소모량·연료비를 계산해 기성용 엑셀을 내려받고, 현황 대시보드와 입력값 검사를 보여 주는 브라우저 도구(1단계 시연판)">
+  <meta name="description" content="운전자 TPR 일지를 양식 그대로 입력하면 모델별 시험일지 정리표(누적 가동시간·아워미터), 설계담당자 주간 현황 메일, 운전시간·연료비 기성 청구서 엑셀을 만드는 브라우저 도구">
   <meta name="robots" content="noindex">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -12,13 +12,16 @@
   <a class="skip" href="#main">본문으로 건너뛰기</a>
   <header class="site-header">
     <div class="inner header-inner">
-      <a class="brand" href="#/data">
+      <a class="brand" href="#/tpr">
         <span class="brand-name">내구시험 일지 정리·기성 집계</span>
-        <span class="brand-sub">현황 엑셀 → 월 운행시간·연료비 → 기성용 엑셀 · 대시보드</span>
+        <span class="brand-sub">TPR 일지 입력 → 모델별 정리표 → 주간 현황 메일 → 운전시간·연료비 기성 청구서</span>
       </a>
       <nav class="nav" id="nav" aria-label="주 메뉴">
+        <a href="#/tpr" data-route="tpr">1. 시험일지 입력</a>
+        <a href="#/summary" data-route="summary">2. 시험일지 정리</a>
+        <a href="#/weekly" data-route="weekly">3. 주간 현황</a>
+        <a href="#/billing" data-route="billing">4. 기성처리</a>
         <a href="#/data" data-route="data">현황 데이터</a>
-        <a href="#/billing" data-route="billing">월간 기성</a>
         <a href="#/dashboard" data-route="dashboard">대시보드</a>
       </nav>
     </div>
@@ -30,7 +33,7 @@
   <main id="main" class="inner main" tabindex="-1"></main>
 
   <footer class="site-footer">
-    <div class="inner">1단계 시연판 · 파일은 서버로 보내지 않고 이 브라우저 안에서만 계산·저장합니다</div>
+    <div class="inner">2단계(2026-09-29 실제 양식 반영) · 파일은 서버로 보내지 않고 이 브라우저 안에서만 계산·저장합니다</div>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

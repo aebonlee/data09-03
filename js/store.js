@@ -26,6 +26,8 @@
       if (p.prices && typeof p.prices === 'object') db.prices = p.prices;
       if (p.mapping && typeof p.mapping === 'object') db.mapping = p.mapping;
       if (typeof p.seq === 'number') db.seq = p.seq;
+      if (p.masters && typeof p.masters === 'object') db.masters = p.masters;
+      if (p.settings && typeof p.settings === 'object') db.settings = p.settings;
       if (p._sample) db._sample = true;
     } catch (e) { /* 깨진 값은 무시하고 빈 DB */ }
     return db;

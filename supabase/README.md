@@ -1,6 +1,6 @@
 # Supabase DB 스크립트 — 내구시험 일지 정리·기성 자동화
 
-이 폴더에는 지금 브라우저에 저장되는 일지 행과 월별 연료 단가를 Supabase(PostgreSQL) 표로 옮기기 위한 스크립트가 들어 있습니다.
+이 폴더에는 지금 브라우저에 저장되는 일지 행·모델 정보·연료 단가·기성 설정을 Supabase(PostgreSQL) 표로 옮기기 위한 스크립트가 들어 있습니다.
 스크립트만 먼저 준비해 둔 단계이며, 앱은 아직 localStorage 로 동작합니다.
 
 ## 왜 DB 가 필요한가
@@ -21,7 +21,12 @@ DB 로 옮기면 기록이 한 곳에 쌓이고, 본인 외에는 아무도 볼 
 |---|---|---|
 | `journal_rows` | 일지 행 — 한 행 = 한 일지 (일자·모델·호기·시험 종류·운전자·아워미터·운행시간·배터리·충전량·연료·문제점·사진) | `data09-03.db` → `rows` |
 | `fuel_prices` | 월별 평균 연료 단가 — 기성 월 × 연료(경유·LPG) 한 행, 단위·출처·조회일 포함 | `data09-03.db` → `prices` |
-| `user_settings` | 불러오기 때 마지막 열 맞추기(`mapping`)와 행 번호(`seq`) | `data09-03.db` → `mapping`, `seq` |
+| `user_settings` | 불러오기 때 마지막 열 맞추기(`mapping`)와 행 번호(`seq`), 기성·메일 설정(`settings`: 업체·결재란 직책·단가·과급·통당 kg·받는 사람) | `data09-03.db` → `mapping`, `seq`, `settings` |
+| `unit_masters` | 모델·호기 정보 — 초기 아워미터·목표 가동시간·PG 정보·과제번호·연료 (2026-09-29) | `data09-03.db` → `masters` |
+| `period_fuel_prices` | 기성 기간(시작~종료)별 연료 단가 — 연료비 청구서용 (2026-09-29) | `data09-03.db` → `prices['시작~종료']` |
+
+2026-09-29 실제 양식을 받아 `journal_rows` 에 TPR 일지 칸(주/야/휴·날씨·충전시간·사이클 시간과 회수·배터리 충전 점검·장비 점검/TPR 작성·특회 장비수리·히터·에어컨·요소수)을 더했고, 배터리 구간·문제점 여러 줄·점검항목 ①~⑤·협조/개선 사항은 `tpr`(jsonb) 한 칸에 담습니다.
+1단계 스키마를 이미 적용한 DB 에 그대로 다시 실행하면 칸만 늘어납니다(`add column if not exists`).
 
 필드 이름은 도구의 표준 열 이름을 그대로 씁니다.
 도구의 내부 칸 `_src`(가져온 곳)·`_unreadable`(못 읽은 칸)·`_raw`(못 읽은 원래 값)는 밑줄을 떼고 `src`·`unreadable`·`raw` 로 옮겼습니다.
@@ -58,9 +63,9 @@ DB 가 이런 값을 제약으로 막으면 검사 화면에 올라와야 할 �
 
 ## 확인 방법
 
-- Table Editor 에 `journal_rows`·`fuel_prices`·`user_settings` 세 표가 보이는지 확인합니다.
+- Table Editor 에 `journal_rows`·`fuel_prices`·`user_settings`·`unit_masters`·`period_fuel_prices` 다섯 표가 보이는지 확인합니다.
 - 표마다 RLS 가 켜져 있고(Enabled) 정책 4개(읽기·추가·수정·삭제)가 붙어 있는지 확인합니다.
-- SQL Editor 에서 다음을 실행해 세 표 모두 `true` 인지 봅니다.
+- SQL Editor 에서 다음을 실행해 다섯 표 모두 `true` 인지 봅니다.
 
 ```sql
 select relname, relrowsecurity from pg_class
@@ -71,7 +76,7 @@ where relnamespace = 'public'::regnamespace and relkind = 'r' order by relname;
 
 이 스크립트는 DB 틀만 만듭니다. 화면(`js/store.js`)은 아직 localStorage 를 씁니다.
 앱을 DB 에 연결하는 작업(Supabase 클라이언트 추가, 로그인 추가, 저장·조회를 표 단위로 교체)은 다음 단계에서 진행합니다.
-연결할 때 upsert 는 `onConflict` 를 반드시 지정합니다(일지 `owner_id,id`, 단가 `owner_id,month,fuel`).
+연결할 때 upsert 는 `onConflict` 를 반드시 지정합니다(일지 `owner_id,id`, 단가 `owner_id,month,fuel`, 모델 정보 `owner_id,model,unit_no`, 기간 단가 `owner_id,period_from,period_to,fuel`).
 단가 입력 칸은 지금 글자 그대로(`1,500`) 저장되므로, DB 에 넣을 때는 숫자로 바꿔(`1500`) 넣습니다.
 
 ## 로컬 검증

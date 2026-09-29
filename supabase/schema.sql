@@ -12,10 +12,16 @@
 --  본인 프로젝트에 올리는 것을 전제로 하므로 테이블 이름에 접두사를 붙이지 않았습니다.
 --  도구에 사용자 역할 구분이 없으므로 모든 행은 만든 사람만 보고 고칩니다.
 --
---  테이블 (3)
---    journal_rows   일지 행 — 한 행 = 한 일지 (localStorage 의 rows)
---    fuel_prices    월별 평균 연료 단가 (prices)
---    user_settings  불러오기 열 맞추기 기억값·행 번호 (mapping, seq)
+--  테이블 (5)
+--    journal_rows        일지 행 — 한 행 = TPR 일지 한 장 (localStorage 의 rows)
+--    fuel_prices         월별 평균 연료 단가 (1단계 월간 집계용 prices)
+--    user_settings       불러오기 열 맞추기 기억값·행 번호·기성/메일 설정 (mapping, seq, settings)
+--    unit_masters        모델·호기 정보 — 초기 아워미터·목표 가동시간·PG·과제번호·연료 (masters)
+--    period_fuel_prices  기성 기간별 연료 단가 — 연료비 청구서용 (prices['시작~종료'])
+--
+--  2026-09-29 실제 양식(TPR 일지·시험일지 정리 엑셀·기성 청구서 2종) 반영:
+--    journal_rows 에 주/야/휴·날씨·사이클·점검 시간 칸과 TPR 전용 값(tpr jsonb)을 더하고
+--    표 두 개를 새로 만든다. 이미 1단계 스키마를 적용한 DB 에 다시 돌려도 된다(ADD COLUMN IF NOT EXISTS).
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -55,6 +61,30 @@ create table if not exists public.journal_rows (
   -- ⚠ 프런트에서 upsert 할 때 onConflict 를 'owner_id,id' 로 반드시 지정할 것
   constraint journal_rows_pkey primary key (owner_id, id)
 );
+-- 2026-09-29 실제 TPR 일지·정리 엑셀 칸 (logic.js STD_FIELDS 에 더한 열)
+alter table public.journal_rows add column if not exists shift           text not null default '';  -- 주/야/휴 (모르는 값은 검사에서 표시)
+alter table public.journal_rows add column if not exists weather         text not null default '';  -- 날씨
+alter table public.journal_rows add column if not exists charge_h        numeric(6,2);              -- 금일충전시간(h)
+alter table public.journal_rows add column if not exists cycle_h         numeric(6,2);              -- 기본/요철 사이클(h)
+alter table public.journal_rows add column if not exists basic_cycles    numeric(8,1);              -- 기본 사이클(회)
+alter table public.journal_rows add column if not exists bump_cycles     numeric(8,1);              -- 요철 사이클(회)
+alter table public.journal_rows add column if not exists battery_check_h numeric(6,2);              -- 배터리 충전 점검(h)
+alter table public.journal_rows add column if not exists inspect_h       numeric(6,2);              -- 장비 점검·TPR 작성(h)
+alter table public.journal_rows add column if not exists special_h       numeric(6,2);              -- 특화(특회) 장비수리(h)
+alter table public.journal_rows add column if not exists heater_h        numeric(6,2);              -- 히터 가동(h)
+alter table public.journal_rows add column if not exists ac_h            numeric(6,2);              -- 에어컨 가동(h)
+alter table public.journal_rows add column if not exists urea_l          numeric(10,2);             -- 요소수 주입량(L)
+-- TPR 양식에만 있는 값: battery[{label,start,end}] · problems[{text,note}] · checks[①~⑤ 유/무] · coop · improve · wheel_nut · lpg_bottles
+alter table public.journal_rows add column if not exists tpr             jsonb not null default '{}'::jsonb;
+alter table public.journal_rows drop constraint if exists journal_rows_tpr_check;
+alter table public.journal_rows add  constraint journal_rows_tpr_check check (jsonb_typeof(tpr) = 'object');
+-- 못 읽은 칸 목록: 숫자·날짜 칸이 늘었으므로 다시 만든다(이름이 고정이라 재실행 안전)
+alter table public.journal_rows drop constraint if exists journal_rows_unreadable_check;
+alter table public.journal_rows add  constraint journal_rows_unreadable_check
+  check (unreadable <@ array['date','hour_start','hour_end','run_hours','charge_h','cycle_h','basic_cycles','bump_cycles',
+                             'battery_check_h','inspect_h','special_h','heater_h','ac_h',
+                             'battery_pct','charge_kwh','fuel_qty','urea_l']::text[]);
+
 create index if not exists journal_rows_owner_date_idx on public.journal_rows (owner_id, date);
 create index if not exists journal_rows_unit_idx       on public.journal_rows (owner_id, model, unit_no, date);
 
@@ -74,6 +104,40 @@ create table if not exists public.fuel_prices (
   constraint fuel_prices_owner_month_fuel_key unique (owner_id, month, fuel)
 );
 
+-- 모델·호기 정보 — 시험일지 정리 엑셀 위쪽(모델명/호기·초기 아워미터·목표 가동시간·PG 정보)
+create table if not exists public.unit_masters (
+  model        text not null check (model <> ''),
+  unit_no      text not null default '',
+  initial_hour numeric(12,2),                                         -- 초기 아워미터(h)
+  target_hours numeric(10,2) check (target_hours > 0),                -- 목표 가동시간(h)
+  pg           text not null default '',                             -- PG 정보
+  project      text not null default '',                             -- 과제번호(기성 청구서)
+  fuel         text not null default '' check (fuel in ('', '경유', 'LPG', '전기')),
+  owner_id     uuid not null default auth.uid(),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  -- ⚠ 프런트에서 upsert 할 때 onConflict 를 'owner_id,model,unit_no' 로 반드시 지정할 것
+  constraint unit_masters_pkey primary key (owner_id, model, unit_no)
+);
+
+-- 기성 기간별 연료 단가 — 청구 기간이 달력 월과 다르므로(예: 04.30~05.30) 시작·종료일로 묶는다
+create table if not exists public.period_fuel_prices (
+  id          bigint generated always as identity primary key,
+  period_from date not null,
+  period_to   date not null,
+  fuel        text not null check (fuel in ('경유', 'LPG')),
+  price       numeric(12,2) check (price >= 0),                       -- VAT 포함 원/kg(LPG)·원/L(경유)
+  unit        text not null default 'L' check (unit in ('L', 'kg')),
+  source      text not null default '',
+  checked     date,
+  owner_id    uuid not null default auth.uid(),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  constraint period_fuel_prices_order check (period_from <= period_to),
+  -- ⚠ 프런트에서 upsert 할 때 onConflict 를 'owner_id,period_from,period_to,fuel' 로 반드시 지정할 것
+  constraint period_fuel_prices_key unique (owner_id, period_from, period_to, fuel)
+);
+
 -- 불러오기 설정 — 사람마다 한 행
 create table if not exists public.user_settings (
   owner_id   uuid primary key default auth.uid(),
@@ -83,6 +147,10 @@ create table if not exists public.user_settings (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- 기성·메일 설정: company · team · approvers[직책] · rate · surcharge{주,야,휴} · bottleKg · mailTo · mailSign
+alter table public.user_settings add column if not exists settings jsonb not null default '{}'::jsonb;
+alter table public.user_settings drop constraint if exists user_settings_settings_check;
+alter table public.user_settings add  constraint user_settings_settings_check check (jsonb_typeof(settings) = 'object');
 
 -- ----------------------------------------------------------------------------
 -- 2. 함수 — search_path 고정
@@ -100,7 +168,7 @@ $fn$;
 do $trg$
 declare t text;
 begin
-  foreach t in array array['journal_rows','fuel_prices','user_settings']
+  foreach t in array array['journal_rows','fuel_prices','user_settings','unit_masters','period_fuel_prices']
   loop
     execute format('drop trigger if exists %I on public.%I', t || '_updated_at', t);
     execute format('create trigger %I before update on public.%I for each row execute function public.set_updated_at()',
@@ -116,11 +184,13 @@ $trg$;
 alter table public.journal_rows  enable row level security;
 alter table public.fuel_prices   enable row level security;
 alter table public.user_settings enable row level security;
+alter table public.unit_masters  enable row level security;
+alter table public.period_fuel_prices enable row level security;
 
 do $rls$
 declare t text;
 begin
-  foreach t in array array['journal_rows','fuel_prices','user_settings']
+  foreach t in array array['journal_rows','fuel_prices','user_settings','unit_masters','period_fuel_prices']
   loop
     execute format('drop policy if exists %I on public.%I', t || '_read',   t);
     execute format('drop policy if exists %I on public.%I', t || '_insert', t);

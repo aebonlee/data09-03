@@ -22,12 +22,12 @@ declare v_n int;
 begin
   perform public._assert_eq(
     (select count(*)::int from pg_tables where schemaname = 'public'
-      and tablename in ('journal_rows','fuel_prices','user_settings')), 3, '표 3개가 한 번씩만 있다 (두 번 적용 후)');
+      and tablename in ('journal_rows','fuel_prices','user_settings','unit_masters','period_fuel_prices')), 5, '표 5개가 한 번씩만 있다 (두 번 적용 후)');
   select count(*) into v_n from pg_trigger t where not t.tgisinternal and t.tgname like '%\_updated\_at';
-  perform public._assert_eq(v_n, 3, 'updated_at 트리거가 표마다 하나씩 (중복 생성 없음)');
+  perform public._assert_eq(v_n, 5, 'updated_at 트리거가 표마다 하나씩 (중복 생성 없음)');
   select count(*) into v_n from pg_policy p join pg_class c on c.oid = p.polrelid
-   where c.relname in ('journal_rows','fuel_prices','user_settings');
-  perform public._assert_eq(v_n, 12, '정책이 표마다 4개씩, 중복 없이 12개');
+   where c.relname in ('journal_rows','fuel_prices','user_settings','unit_masters','period_fuel_prices');
+  perform public._assert_eq(v_n, 20, '정책이 표마다 4개씩, 중복 없이 20개');
 end $t$;
 
 insert into auth.users (id, email) values
@@ -94,7 +94,53 @@ begin
   exception when check_violation then v_raised := true; end;
   perform public._assert(v_raised, '단위는 L·kg 만 (CHECK)');
 
-  insert into public.user_settings (mapping, seq) values ('{"date": "일자", "model": "모델"}', 2);
+  -- 2026-09-29 TPR 칸
+  insert into public.journal_rows (id, date, model, unit_no, driver, shift, run_hours, hour_start, hour_end, inspect_h, battery_check_h, basic_cycles, tpr)
+  values ('r3', '2025-01-03', 'MODEL-X', '#4', '운전자A', '주', 7.0, 938.5, 945.5, 0.5, 0.5, 34,
+          '{"checks": ["무","무","무","무","무"], "battery": [{"label": "기본/요철 (2hr)", "start": 99, "end": 70}]}');
+  insert into public.journal_rows (id, model, unreadable) values ('r4', 'X', array['inspect_h','urea_l']);
+  perform public._assert((select tpr->'checks'->>4 = '무' and shift = '주' from public.journal_rows where id = 'r3'),
+    'TPR 칸(주/야/휴·점검항목)이 저장된다');
+  perform public._assert(exists (select 1 from public.journal_rows where id = 'r4'),
+    '새 숫자 칸(inspect_h·urea_l)도 못 읽은 칸 목록에 들어간다');
+
+  v_raised := false;
+  begin insert into public.journal_rows (id, model, tpr) values ('r5', 'X', '[]');
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, 'tpr 은 객체여야 한다 (CHECK)');
+
+  insert into public.unit_masters (model, unit_no, initial_hour, target_hours, pg, project, fuel)
+  values ('MODEL-Y', '#1', 67, 200, '예시', 'M-예시-001', '경유');
+
+  v_raised := false;
+  begin insert into public.unit_masters (model, unit_no) values ('MODEL-Y', '#1');
+  exception when unique_violation then v_raised := true; end;
+  perform public._assert(v_raised, '같은 모델·호기 정보는 하나만 (PK)');
+
+  v_raised := false;
+  begin insert into public.unit_masters (model, target_hours) values ('Y', 0);
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '목표 가동시간은 0 보다 커야 한다 (CHECK)');
+
+  insert into public.period_fuel_prices (period_from, period_to, fuel, price, unit, source)
+  values ('2025-04-30', '2025-05-30', 'LPG', 2505, 'kg', '예시');
+
+  v_raised := false;
+  begin insert into public.period_fuel_prices (period_from, period_to, fuel) values ('2025-05-30', '2025-04-30', '경유');
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '기성 기간은 시작 <= 종료 (CHECK)');
+
+  v_raised := false;
+  begin insert into public.period_fuel_prices (period_from, period_to, fuel, price) values ('2025-04-30', '2025-05-30', 'LPG', 2600);
+  exception when unique_violation then v_raised := true; end;
+  perform public._assert(v_raised, '같은 기간·같은 연료 단가는 하나만 (UNIQUE)');
+
+  insert into public.user_settings (mapping, seq, settings) values ('{"date": "일자", "model": "모델"}', 2, '{"rate": "24400", "surcharge": {"야": 19}}');
+
+  v_raised := false;
+  begin update public.user_settings set settings = '"x"';
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, 'settings 는 객체여야 한다 (CHECK)');
 
   v_raised := false;
   begin update public.user_settings set seq = -1;
@@ -115,6 +161,8 @@ begin
   perform public._assert_eq((select count(*) from public.journal_rows),  0::bigint, 'B 는 A 의 일지 행을 못 본다');
   perform public._assert_eq((select count(*) from public.fuel_prices),   0::bigint, 'B 는 A 의 연료 단가를 못 본다');
   perform public._assert_eq((select count(*) from public.user_settings), 0::bigint, 'B 는 A 의 설정을 못 본다');
+  perform public._assert_eq((select count(*) from public.unit_masters), 0::bigint, 'B 는 A 의 모델 정보를 못 본다');
+  perform public._assert_eq((select count(*) from public.period_fuel_prices), 0::bigint, 'B 는 A 의 기간 단가를 못 본다');
 
   update public.journal_rows set driver = '조작';
   get diagnostics v_n = row_count;
@@ -157,7 +205,7 @@ set request.jwt.claim.sub = '';
 do $t$
 declare v_ok boolean; v_raised boolean := false; v_t text;
 begin
-  foreach v_t in array array['journal_rows','fuel_prices','user_settings']
+  foreach v_t in array array['journal_rows','fuel_prices','user_settings','unit_masters','period_fuel_prices']
   loop
     execute format('select count(*) = 0 from public.%I', v_t) into v_ok;
     perform public._assert(v_ok, 'anon 은 ' || v_t || ' 을 한 행도 못 본다');

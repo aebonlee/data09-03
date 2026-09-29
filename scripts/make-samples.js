@@ -4,6 +4,7 @@
 //  - 예시데이터_표준현황.xlsx / .csv : 표준 열 그대로
 //  - 예시데이터_모델별엑셀.xlsx     : 모델마다 시트 하나, 열 이름이 표준과 다르고 모델 열이 없음
 //                                     (「열 맞추기」와 「시트 이름을 모델로」를 시험하는 용도)
+//  - 예시데이터_시험일지정리.xlsx   : 2026-09-29 받은 정리 엑셀 배치(위 4줄 모델 정보 + 6번째 줄 열 이름)를 따른 모델별 시트
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('../vendor/xlsx.full.min.js');
@@ -62,4 +63,18 @@ for (const s of readBook('예시데이터_모델별엑셀.xlsx')) {
 const a1 = JSON.stringify(L.aggregateMonthly(merged));
 const a2 = JSON.stringify(L.aggregateMonthly(rows.map(r => L.normalizeRow(r))));
 if (a1 !== a2) { console.error('모델별 엑셀 집계 불일치\n' + a1 + '\n' + a2); process.exit(1); }
+// 시험일지 정리 엑셀(실제 양식 배치). 다시 읽으면 모델 정보(머리)와 누적 가동시간이 원본과 같아야 합니다
+const masters = Sample.masters();
+const ids = rows.map((r, i) => ({ id: 's' + i, ...r }));
+const sumBook = {};
+for (const k of Object.keys(masters)) sumBook[masters[k].model.replace('(예시)', '') + ' ' + masters[k].unit_no] = L.summarySheet(L.unitSummary(ids, masters[k]));
+write('예시데이터_시험일지정리.xlsx', sumBook);
+for (const s of readBook('예시데이터_시험일지정리.xlsx')) {
+  const h = L.detectHeaderRow(s.aoa);
+  const info = L.parseSummaryHeader(s.aoa);
+  const got = L.applyMapping(s.aoa, { headerRow: h, mapping: L.autoMap(L.headersOf(s.aoa, h)), sheetName: s.name, modelFallback: 'sheet' }).rows;
+  const m = masters[L.masterKey(info.model, info.unit_no)];
+  if (!m || info.targetHours !== m.targetHours || info.initialHour !== m.initialHour) { console.error('정리 엑셀 머리 불일치 ' + s.name); process.exit(1); }
+  if (L.unitSummary(got, m).totals.hours !== L.unitSummary(ids, m).totals.hours) { console.error('정리 엑셀 누적 불일치 ' + s.name); process.exit(1); }
+}
 console.log('samples/ 생성·왕복 확인 완료: 일지 ' + rows.length + '행, 모델별 시트 ' + Object.keys(perModel).length + '개');
