@@ -30,7 +30,8 @@
     { key: 'bump_cycles', label: '요철 사이클(회)', type: 'number', synonyms: ['요철 사이클', '요철사이클', '요철 사이클 회수', '요철사이클회수'] },
     { key: 'battery_check_h', label: '배터리 충전 점검(h)', type: 'hours', synonyms: ['배터리 충전 점검', '배터리충전점검', '충전점검'] },
     { key: 'inspect_h', label: '장비 점검·TPR 작성(h)', type: 'hours', synonyms: ['장비 점검 및 TPR 작성', '장비점검및tpr작성', '장비 점검/TPR 작성', '장비점검tpr작성', 'tpr작성', '장비점검'] },
-    { key: 'special_h', label: '특화 장비수리(h)', type: 'hours', synonyms: ['특회 장비수리', '특회장비수리', '특화 장비수리', '특화장비수리', '특화시험', '장비수리'] },
+    // 특화 시험(동력전달 특화 등) 시간. 수강생 답(09-29 오후): 운행 중 장비 수리는 따로 잡지 않고 특화 시험 시간에 포함
+    { key: 'special_h', label: '특화 시험·장비수리(h)', type: 'hours', synonyms: ['특회 장비수리', '특회장비수리', '특화 장비수리', '특화장비수리', '특화 장비 수리', '특화시험', '특화 시험', '장비수리'] },
     { key: 'heater_h', label: '히터 가동(h)', type: 'hours', synonyms: ['히터가동시간', '히터 가동', '히터가동', '히터'] },
     { key: 'ac_h', label: '에어컨 가동(h)', type: 'hours', synonyms: ['에어컨가동시간', '에어컨가동 시간', '에어컨 가동', '에어컨가동', '에어컨'] },
     { key: 'battery_pct', label: '배터리소모율(%)', type: 'number', synonyms: ['배터리소모율', '배터리 소모율', '소모율', '배터리사용률', 'soc소모'] },
@@ -481,7 +482,7 @@
       fuel_qty: '경유 L · LPG kg 주입량(주입한 날만)', issue: '문제점 문장 그대로', photo: '사진 파일명이나 보관 위치',
       shift: '주 / 야 / 휴 (주간·야간·휴일도 됩니다)', weather: '맑음·흐림·비 등', charge_h: 'TPR 「금일충전시간」',
       cycle_h: 'TPR 「기본/요철 사이클」 시간', basic_cycles: '기본 사이클 회수', bump_cycles: '요철 사이클 회수',
-      battery_check_h: 'TPR 「배터리 충전 점검」 시간', inspect_h: 'TPR 「장비 점검/TPR 작성」 시간', special_h: '정리 엑셀 「특회 장비 수리」 시간',
+      battery_check_h: 'TPR 「배터리 충전 점검」 시간', inspect_h: 'TPR 「장비 점검/TPR 작성」 시간', special_h: '특화 시험(동력전달 특화 등)·장비수리 시간 — 정리 엑셀 「특회 장비 수리」 칸',
       heater_h: '히터 가동 시간', ac_h: '에어컨 가동 시간', urea_l: '요소수 주입량(L)'
     };
     STD_FIELDS.forEach(function (f) { guide.push([f.label, f.required ? '필수' : '', how[f.key] || '']); });
@@ -568,6 +569,34 @@
     var first = new Date(+p[0], +p[1] - 2, 1);
     var last = new Date(+p[0], +p[1] - 1, 0);
     return { from: toDateStr(first), to: toDateStr(last) };
+  }
+  // 주간 보고 기준일 기본값: 오늘을 포함한 가장 최근 수요일(매주 수요일 송부)
+  function lastWednesday(today) {
+    var p = String(today).split('-');
+    var d = new Date(+p[0], +p[1] - 1, +p[2]);
+    d.setDate(d.getDate() - ((d.getDay() - 3 + 7) % 7));
+    return toDateStr(d);
+  }
+  // 문제점 즉시 알림(수시): 문제점이 생기면 사진과 함께 설계 담당자·직책자에게 바로 보내는 메일
+  function issueAlertMail(row, opt) {
+    opt = opt || {};
+    var label = modelLabel(row.model, row.unit_no);
+    var probs = (row.problems && row.problems.length) ? row.problems : (row.issue ? [{ text: row.issue, note: '' }] : []);
+    var first = probs.length ? probs[0].text : '';
+    var subject = '[내구시험 문제점] ' + label + ' ' + (row.date || '') + (row.shift ? '(' + row.shift + ')' : '') + (first ? ' — ' + (first.length > 30 ? first.slice(0, 30) + '…' : first) : '');
+    var b = [opt.greeting || '안녕하세요. 내구시험 중 문제점이 발생해 알려 드립니다.', '',
+      '■ 모델/호기: ' + label,
+      '■ 발생: ' + (row.date || '') + (row.date ? '(' + weekdayKo(row.date) + ')' : '') + (row.shift ? ' ' + shiftLabel(row.shift) : ''),
+      '■ 운전자: ' + (row.driver || '-')];
+    if (opt.cum != null) b.push('■ 누적 가동시간: ' + fmtNum(opt.cum) + 'h' + (opt.target > 0 ? ' / 목표 ' + fmtNum(opt.target) + 'h' : ''));
+    if (row.hour_end != null) b.push('■ Hour Meter: ' + fmtNum(row.hour_end) + 'h');
+    b.push('', '1. 문제점 / 조치내용');
+    if (!probs.length) b.push('   - (적힌 내용 없음)');
+    probs.forEach(function (p, i) { b.push('   ' + (i + 1) + ') ' + p.text + (p.note ? ' (비고: ' + p.note + ')' : '')); });
+    var yes = (row.checks || []).map(function (c, i) { return c === '유' ? '   - ' + '①②③④⑤'.charAt(i) + ' ' + CHECK_ITEMS[i] : null; }).filter(Boolean);
+    if (yes.length) b.push('', '2. 일일 점검 항목 「유」'); b = b.concat(yes);
+    b.push('', '첨부: 현장 사진' + (row.photo ? ' (' + row.photo + ')' : ''), '', '원인 분석 부탁드립니다.', '', opt.sign || '감사합니다.');
+    return { subject: subject, body: b.join('\n') };
   }
   function modelLabel(model, unit) { return (model || '') + (unit ? ' ' + unit : ''); }
 
@@ -721,13 +750,20 @@
   // ── 모델 정보(시험일지 정리 엑셀 머리 부분) ─────────────────
   // { model, unit_no, initialHour, targetHours, pg, project, fuel }
   function masterKey(model, unit) { return (model || '') + '|' + (unit || ''); }
+  // 목표 가동시간 기본값(수강생 답 09-29 오후): 보통 1000시간, 특화해서 더 할 때 +500시간 = 1500시간
+  var TARGET_BASE = 1000, TARGET_EXTRA = 500;
   function normMaster(m) {
     m = m || {};
+    var t = parseNum(m.targetHours);
+    var extended = m.extended === true || m.extended === 'true';
     return {
       model: String(m.model == null ? '' : m.model).trim(),
       unit_no: String(m.unit_no == null ? '' : m.unit_no).trim(),
       initialHour: parseNum(m.initialHour),
-      targetHours: parseNum(m.targetHours),
+      // 직접 적은 목표가 있으면 그 값, 없으면 1000h(특화 +500h 표시 시 1500h)
+      targetHours: t != null ? t : TARGET_BASE + (extended ? TARGET_EXTRA : 0),
+      targetDefault: t == null,
+      extended: extended,
       pg: String(m.pg == null ? '' : m.pg).trim(),
       project: String(m.project == null ? '' : m.project).trim(),
       fuel: m.fuel ? normFuel(m.fuel) : ''
@@ -815,6 +851,9 @@
   }
   function pct(x, d) { return x == null ? '' : fmtNum(x * 100, d == null ? 1 : d) + '%'; }
   function fuelUnit(fuel) { return fuel === 'LPG' ? 'kg' : 'L'; }
+  // 연료비 청구 품목: 경유·LPG + 요소수
+  var UREA = '요소수';
+  var BILL_ITEMS = ['경유', 'LPG', UREA];
   // 정리표 엑셀: 위 4줄 머리 + 6번째 줄 열 이름 + 일자별 행 (수강생 엑셀 배치를 따름)
   function summarySheet(sum) {
     var m = sum.master, t = sum.totals;
@@ -844,11 +883,12 @@
     var units = unitList(rows, masters);
     var list = units.map(function (u) {
       var mine = rowsOfUnit(rows, u.key).filter(function (r) { return r.date && r.date <= asOf; });
-      var cum = 0, week = 0, last = '', total = 0, weekIssues = [];
+      var cum = 0, week = 0, last = '', total = 0, weekIssues = [], weekLogs = 0;
       sortLogs(mine).forEach(function (r) {
         var h = effectiveHours(r);
         if (h > 0) cum = r2(cum + h);
         if (r.date >= from) {
+          weekLogs++;
           if (h > 0) week = r2(week + h);
           if (r.issue) weekIssues.push({ id: r.id, date: r.date, shift: r.shift || '', driver: r.driver || '', text: r.issue });
         }
@@ -863,7 +903,7 @@
       return {
         key: u.key, label: u.label, model: u.model, unit_no: u.unit_no, cum: cum, target: target,
         ratio: target > 0 ? cum / target : null, remaining: remaining, done: target > 0 && cum >= target,
-        weekHours: week, weekIssues: weekIssues, totalIssues: total, lastDate: last, eta: eta
+        weekHours: week, weekIssues: weekIssues, weekLogs: weekLogs, totalIssues: total, lastDate: last, eta: eta
       };
     }).filter(function (x) { return x.lastDate || x.target > 0; });
     return { asOf: asOf, from: from, days: days, models: list };
@@ -871,9 +911,10 @@
   function shiftLabel(s) { return s === '주' ? '주간' : s === '야' ? '야간' : s === '휴' ? '휴일' : s || ''; }
   function weeklyMail(rep, opt) {
     opt = opt || {};
-    var subject = '[내구시험 현황] ' + rep.asOf + ' 기준 주간 보고 (' + rep.from + ' ~ ' + rep.asOf + ')';
+    // 수강생 답(09-29 오후): 매주 수요일 R&D 전체에 현황·문제점과 내구시험일지(PDF)를 보냄
+    var subject = '[내구시험 현황] ' + rep.asOf + '(' + weekdayKo(rep.asOf) + ') 기준 주간 보고 (' + rep.from + ' ~ ' + rep.asOf + ')';
     var L1 = [
-      (opt.greeting || '안녕하세요. 내구시험 주간 현황을 보내 드립니다.'),
+      (opt.greeting || '안녕하세요. 이번 주 내구시험 현황과 문제점을 보내 드립니다.'),
       '',
       '■ 기준일: ' + rep.asOf + ' / 집계 기간: ' + rep.from + ' ~ ' + rep.asOf + ' (' + rep.days + '일)',
       '',
@@ -896,7 +937,10 @@
       m.weekIssues.forEach(function (i) { L1.push('     · ' + i.date.slice(5) + (i.shift ? '(' + i.shift + ')' : '') + ' ' + i.text); });
     });
     if (!any) L1.push('   - 이번 주 기록된 문제점이 없습니다.');
-    L1.push('', '진행 그래프는 첨부한 이미지를 확인해 주세요. 원인 분석이 필요한 항목은 회신 부탁드립니다.', '', opt.sign || '감사합니다.');
+    var logs = rep.models.reduce(function (n, m) { return n + (m.weekLogs || 0); }, 0);
+    L1.push('', '3. 첨부', '   - 진행 그래프(이미지)', '   - 내구시험일지(PDF) ' + logs + '장' +
+      (logs ? ' — ' + rep.models.filter(function (m) { return m.weekLogs; }).map(function (m) { return m.label + ' ' + m.weekLogs + '장'; }).join(', ') : ''));
+    L1.push('', '원인 분석이 필요한 항목은 회신 부탁드립니다.', '', opt.sign || '감사합니다.');
     return { subject: subject, body: L1.join('\n') };
   }
   function escXml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -932,8 +976,8 @@
 
   // ── 기성처리 ① 운전시간 정산(개발장비 내구시험 기성 청구서) ─────
   // 소계 = (금월 실가동 + TPR 작성 및 점검 + 특화시험) × (1 + 과급), 기성금액 = 소계 × 단가(원 단위 반올림).
-  // 특화시험 = 배터리 충전 점검 + 특회(특화) 장비수리 — 청구서 각주 「운행 중 배터리/충전 상태 점검, 차량 이상 시
-  // 장비 점검/수정한 시간」을 일지 칸에 대응시킨 가정입니다(확인 필요).
+  // 특화시험 = 배터리 충전 점검 + 특화 시험(동력전달 특화 등)·장비수리 — 수강생 답(09-29 오후)으로 확정.
+  // 과급: 야간 19%, 휴일 30% — 계약서에 명기된 고정값(수강생 답). 화면에서 바꾸지 않습니다.
   var DEFAULT_SURCHARGE = { '주': 0, '야': 19, '휴': 30 };
   function hourBillingLines(rows, masters, from, to) {
     var units = unitList(rows, masters);
@@ -1082,19 +1126,21 @@
       var cum = mine.reduce(function (s, r) { var h = effectiveHours(r); return h > 0 ? r2(s + h) : s; }, 0);
       var month = inP.reduce(function (s, r) { var h = effectiveHours(r); return h > 0 ? r2(s + h) : s; }, 0);
       FUELS.forEach(function (f) {
-        var qty = 0, bottles = 0, urea = 0, logs = 0;
+        var qty = 0, bottles = 0, logs = 0;
         inP.forEach(function (r) {
           var fuel = r.fuel_type || u.fuel;
           if (fuel !== f.key) return;
           logs++;
           if (r.fuel_qty > 0) qty = r2(qty + r.fuel_qty);
           if (r.lpg_bottles > 0) bottles = r2(bottles + r.lpg_bottles);
-          if (r.urea_l > 0) urea = r2(urea + r.urea_l);
         });
         if (qty > 0 || (u.fuel === f.key && logs)) {
-          out.push({ key: u.key, label: u.label, project: u.project, fuel: f.key, unit: fuelUnit(f.key), cum: cum, month: month, qty: qty, bottles: bottles, urea: urea });
+          out.push({ key: u.key, label: u.label, project: u.project, fuel: f.key, unit: fuelUnit(f.key), cum: cum, month: month, qty: qty, bottles: bottles });
         }
       });
+      // 요소수: 모델에 따라 들어가며 청구 대상(수강생 답 09-29 오후) — 연료와 따로 한 줄
+      var urea = inP.reduce(function (s, r) { return r.urea_l > 0 ? r2(s + r.urea_l) : s; }, 0);
+      if (urea > 0) out.push({ key: u.key, label: u.label, project: u.project, fuel: UREA, unit: 'L', cum: cum, month: month, qty: urea, bottles: 0 });
     });
     return out;
   }
@@ -1111,7 +1157,6 @@
       else amount = l.qty > 0 ? Math.round(r4(l.qty * p)) : 0;
       var note = '';
       if (l.fuel === 'LPG' && l.qty > 0) note = fmtNum(l.bottles > 0 ? l.bottles : l.qty / bottleKg, l.bottles > 0 || (l.qty / bottleKg) % 1 === 0 ? 0 : 1) + '통';
-      if (l.urea > 0) note = (note ? note + ', ' : '') + '요소수 ' + fmtNum(l.urea) + 'L';
       t.qty[l.fuel] = r2((t.qty[l.fuel] || 0) + l.qty);
       if (amount != null) t.amount += amount;
       return Object.assign({}, l, { price: p, amount: amount, note: note });
@@ -1130,7 +1175,7 @@
       ['2. 기간 : ' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to), '', '', '', '', '', '', '', '', ''],
       ['3. 주유 금액 : ' + (bill.missingPrice.length ? '(단가 미입력: ' + bill.missingPrice.join(', ') + ')' : won(t.amount)) + ' (VAT 포함)', '', '', '', '', '', '', '/', '/', '/'],
       ['4. 주유 내역', '', '', '', '', '', '', '', '', meta.team || ''],
-      ['순', '기종', '유종', '장비 가동(h, cycle)', '', '가스/경유 사용량(LPG kg · 경유 L)', '단가(원/kg·원/L)', '금액(원)', '과제번호', '비고'],
+      ['순', '기종', '유종', '장비 가동(h, cycle)', '', '가스/경유/요소수 사용량(LPG kg · 경유·요소수 L)', '단가(원/kg·원/L)', '금액(원)', '과제번호', '비고'],
       ['', '', '', '총누적', '금월', '', '', '', '', '']
     ];
     var merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, { s: { r: 5, c: 3 }, e: { r: 5, c: 4 } }];
@@ -1145,21 +1190,26 @@
     var sheets = { '청구서': { aoa: aoa, merges: merges } };
     var used = { '청구서': true, '단가': true };
     bill.lines.forEach(function (l) {
-      var d = [[l.label + ' 연료 주입 현황 (' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to) + ')'], [],
-        ['Date', '주/야/휴', '일 가동시간(h)', l.fuel + ' 사용량(' + l.unit + ')', 'LPG 통 수', '요소수(L)', '운전자 Code']];
+      var isUrea = l.fuel === UREA;
+      var d = [[l.label + ' ' + (isUrea ? '요소수' : '연료') + ' 주입 현황 (' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to) + ')'], [],
+        ['Date', '주/야/휴', '일 가동시간(h)', l.fuel + ' 사용량(' + l.unit + ')', isUrea ? '' : 'LPG 통 수', '운전자 Code']];
       sortLogs(rowsOfUnit(rows, l.key)).forEach(function (r) {
         if (!r.date || r.date < meta.from || r.date > meta.to) return;
+        var h = effectiveHours(r);
+        if (isUrea) {
+          if (r.urea_l > 0) d.push([r.date, r.shift || '', h == null ? '' : h, r.urea_l, '', r.driver || '']);
+          return;
+        }
         var fuel = r.fuel_type || (normMaster((masters || {})[l.key]).fuel) || l.fuel;
         if (fuel !== l.fuel) return;
-        if (!(r.fuel_qty > 0) && !(r.urea_l > 0) && !(r.lpg_bottles > 0)) return;
-        var h = effectiveHours(r);
-        d.push([r.date, r.shift || '', h == null ? '' : h, r.fuel_qty == null ? '' : r.fuel_qty, r.lpg_bottles == null ? '' : r.lpg_bottles, r.urea_l == null ? '' : r.urea_l, r.driver || '']);
+        if (!(r.fuel_qty > 0) && !(r.lpg_bottles > 0)) return;
+        d.push([r.date, r.shift || '', h == null ? '' : h, r.fuel_qty == null ? '' : r.fuel_qty, r.lpg_bottles == null ? '' : r.lpg_bottles, r.driver || '']);
       });
-      d.push(['합계', '', l.month, l.qty, l.bottles || '', l.urea || '', '']);
-      sheets[sheetName(l.label, used)] = { aoa: d };
+      d.push(['합계', '', l.month, l.qty, l.bottles || '', '']);
+      sheets[sheetName(l.label + (isUrea ? ' 요소수' : ''), used)] = { aoa: d };
     });
     var pr = [['연료', '단가(원)', '단위', '가격 출처', '조회일']];
-    FUELS.forEach(function (f) { var p = prices[f.key] || {}; pr.push([f.key, p.price == null ? '' : p.price, '원/' + fuelUnit(f.key), p.source || '', p.checked || '']); });
+    BILL_ITEMS.forEach(function (k) { var p = prices[k] || {}; pr.push([k, p.price == null ? '' : p.price, '원/' + fuelUnit(k), p.source || '', p.checked || '']); });
     sheets['단가'] = { aoa: pr };
     return sheets;
   }
@@ -1176,7 +1226,8 @@
     aoaToCsv: aoaToCsv,
     // 2026-09-29 실제 양식 기준
     SHIFTS: SHIFTS, SHIFT_ORDER: SHIFT_ORDER, CHECK_ITEMS: CHECK_ITEMS, BATTERY_SEGMENTS: BATTERY_SEGMENTS, EXTRA_KEYS: EXTRA_KEYS,
-    DEFAULT_SURCHARGE: DEFAULT_SURCHARGE, normShift: normShift, sortLogs: sortLogs, fmtNum: fmtNum, addDays: addDays, weekdayKo: weekdayKo,
+    DEFAULT_SURCHARGE: DEFAULT_SURCHARGE, TARGET_BASE: TARGET_BASE, TARGET_EXTRA: TARGET_EXTRA, UREA: UREA, BILL_ITEMS: BILL_ITEMS,
+    lastWednesday: lastWednesday, issueAlertMail: issueAlertMail, normShift: normShift, sortLogs: sortLogs, fmtNum: fmtNum, addDays: addDays, weekdayKo: weekdayKo,
     prevMonthRange: prevMonthRange, modelLabel: modelLabel, shiftLabel: shiftLabel, fuelUnit: fuelUnit,
     tprToRow: tprToRow, rowToTpr: rowToTpr, batteryUse: batteryUse, tprPrompt: tprPrompt, tprFromAi: tprFromAi,
     masterKey: masterKey, normMaster: normMaster, unitList: unitList, rowsOfUnit: rowsOfUnit, parseSummaryHeader: parseSummaryHeader,

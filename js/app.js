@@ -640,7 +640,7 @@
     var items = [
       ['cycle_h', '기본/요철 사이클', 'h'], ['basic_cycles', '기본 사이클', '회'], ['bump_cycles', '요철 사이클', '회'],
       ['battery_check_h', '배터리 충전 점검', 'h'], ['inspect_h', '장비 점검/TPR 작성', 'h'],
-      ['ac_h', '에어컨 가동', 'h'], ['heater_h', '히터 가동', 'h'], ['special_h', '특회 장비수리(정리표 칸)', 'h']
+      ['ac_h', '에어컨 가동', 'h'], ['heater_h', '히터 가동', 'h'], ['special_h', '특화 시험(동력전달 특화 등)·장비수리', 'h']
     ];
     var itTb = h('tbody');
     items.forEach(function (it) {
@@ -733,10 +733,13 @@
       var msg = (tpr.editId ? '고쳤습니다' : '저장했습니다') + (iss.length ? ' — 확인할 곳 ' + iss.length + '건: ' + iss.map(function (i) { return i.msg; }).join(' / ') : '');
       toast(msg, iss.some(function (i) { return i.level === 'error'; }));
       tpr.editId = null;
+      var alertRow = nr.issue ? nr : null;
       tpr.form = next ? blankTpr(nr) : blankTpr(null);
       if (!next) { tpr.form.model = nr.model; tpr.form.unit_no = nr.unit_no; tpr.form.driver = nr.driver; }
       render();
       window.scrollTo(0, 0);
+      // 문제점이 적힌 일지는 바로 알림 메일을 만들 수 있게 띄웁니다(보내지 않으면 닫기)
+      if (alertRow) alertDialog(alertRow);
     }
     formWrap.appendChild(h('div', { class: 'save-bar' },
       h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { doSave(true); } }, editing ? '고쳐 저장하고 다음 일지' : '저장하고 다음 일지'),
@@ -825,7 +828,7 @@
       h('div', { class: 'filters' }, field('모델명/호기', sel)),
       h('dl', { class: 'master' },
         h('div', null, h('dt', null, '초기 아워미터'), h('dd', null, u.initialHour == null ? '미입력' : L.fmtNum(u.initialHour) + ' hr')),
-        h('div', null, h('dt', null, '목표 가동시간'), h('dd', null, u.targetHours == null ? '미입력' : L.fmtNum(u.targetHours) + ' hr')),
+        h('div', null, h('dt', null, '목표 가동시간'), h('dd', null, L.fmtNum(u.targetHours) + ' hr' + (u.extended ? ' (특화 +500)' : '') + (u.targetDefault ? ' · 기본값' : ''))),
         h('div', null, h('dt', null, 'PG 정보'), h('dd', null, u.pg || '-')),
         h('div', null, h('dt', null, '과제번호'), h('dd', null, u.project || '-')),
         h('div', null, h('dt', null, '연료'), h('dd', null, u.fuel || '-'))),
@@ -860,7 +863,8 @@
     var inputs = {
       model: h('input', { type: 'text', name: 'model', value: m.model, readonly: !isNew && L.rowsOfUnit(db.rows, u.key).length ? true : null }),
       unit_no: h('input', { type: 'text', name: 'unit_no', value: m.unit_no, readonly: !isNew && L.rowsOfUnit(db.rows, u.key).length ? true : null }),
-      initialHour: numIn('initialHour', m.initialHour), targetHours: numIn('targetHours', m.targetHours),
+      initialHour: numIn('initialHour', m.initialHour), targetHours: numIn('targetHours', m.targetDefault ? '' : m.targetHours, { placeholder: '비우면 1000 (특화 +500 = 1500)' }),
+      extended: h('input', { type: 'checkbox', name: 'extended', checked: !!m.extended }),
       pg: h('input', { type: 'text', name: 'pg', value: m.pg }), project: h('input', { type: 'text', name: 'project', value: m.project }),
       fuel: select('fuel', [['', '(모름)'], '경유', 'LPG', '전기'], m.fuel)
     };
@@ -868,20 +872,23 @@
       !isNew && L.rowsOfUnit(db.rows, u.key).length ? h('p', { class: 'note' }, '일지가 있는 모델은 모델명·호기를 여기서 바꾸지 않습니다(일지와 연결이 끊기지 않게). 이름을 바꾸려면 「현황 데이터」에서 일지를 고쳐 주세요.') : null,
       h('div', { class: 'form-grid' },
         field('모델명 (필수)', inputs.model, '예: MODEL-Y'), field('호기', inputs.unit_no, '예: #1'),
-        field('초기 아워미터(hr)', inputs.initialHour, '시험 시작 때 아워미터'), field('목표 가동시간(hr)', inputs.targetHours),
+        field('초기 아워미터(hr)', inputs.initialHour, '시험 시작 때 아워미터'), field('목표 가동시간(hr)', inputs.targetHours, '보통 1000시간. 다른 값일 때만 적어 주세요'),
+        h('label', { class: 'check span-all' }, inputs.extended, '특화 시험 모델(+500시간 → 목표 1500시간)'),
         field('PG 정보', inputs.pg), field('과제번호', inputs.project, '기성 청구서 「과제번호」 칸'),
         field('연료', inputs.fuel, '연료 칸이 빈 일지는 이 연료로 정산합니다'))
     ], [
       !isNew && !L.rowsOfUnit(db.rows, u.key).length ? h('button', { type: 'button', class: 'btn btn-danger', onclick: function () { delete db.masters[u.key]; save(); closeDialog(); render(); } }, '모델 지우기') : null,
       h('button', { type: 'button', class: 'btn', onclick: closeDialog }, '취소'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: function () {
-        var nm = L.normMaster({ model: inputs.model.value, unit_no: inputs.unit_no.value, initialHour: inputs.initialHour.value, targetHours: inputs.targetHours.value, pg: inputs.pg.value, project: inputs.project.value, fuel: inputs.fuel.value });
+        var raw = { model: inputs.model.value.trim(), unit_no: inputs.unit_no.value.trim(), initialHour: inputs.initialHour.value.trim(), targetHours: inputs.targetHours.value.trim(), extended: inputs.extended.checked, pg: inputs.pg.value.trim(), project: inputs.project.value.trim(), fuel: inputs.fuel.value };
+        var nm = L.normMaster(raw);
         if (!nm.model) { toast('모델명을 적어 주세요', true); return; }
         if (inputs.initialHour.value.trim() && nm.initialHour == null) { toast('초기 아워미터를 숫자로 적어 주세요', true); return; }
-        if (inputs.targetHours.value.trim() && nm.targetHours == null) { toast('목표 가동시간을 숫자로 적어 주세요', true); return; }
+        if (raw.targetHours && L.parseNum(raw.targetHours) == null) { toast('목표 가동시간을 숫자로 적어 주세요', true); return; }
         db.masters = db.masters || {};
         if (!isNew && u.key !== L.masterKey(nm.model, nm.unit_no)) delete db.masters[u.key];
-        db.masters[L.masterKey(nm.model, nm.unit_no)] = nm;
+        // 목표를 비우면 저장도 빈 값으로 둡니다(나중에 특화 표시를 바꾸면 1000 ↔ 1500 이 따라 바뀌게)
+        db.masters[L.masterKey(nm.model, nm.unit_no)] = { model: nm.model, unit_no: nm.unit_no, initialHour: nm.initialHour, targetHours: nm.targetDefault ? null : nm.targetHours, extended: nm.extended, pg: nm.pg, project: nm.project, fuel: nm.fuel };
         sumKey = L.masterKey(nm.model, nm.unit_no);
         save(); closeDialog(); toast('모델 정보를 저장했습니다'); render();
       } }, '저장')
@@ -893,13 +900,14 @@
     main.appendChild(h('div', { class: 'page-head' }, h('h1', null, '주간 현황 보고')));
     var st = settings();
     var lastDate = db.rows.reduce(function (m, r) { return r.date && r.date > m ? r.date : m; }, '');
-    if (!weekly.asOf) weekly.asOf = lastDate && lastDate < today() ? lastDate : today();
+    // 매주 수요일 R&D 전체에 송부(수강생 답) — 기준일 기본값은 오늘을 포함한 가장 최근 수요일
+    if (!weekly.asOf) weekly.asOf = L.lastWednesday(today());
     var asOf = h('input', { type: 'date', name: 'asOf', value: weekly.asOf });
     var days = select('days', [['7', '최근 7일'], ['14', '최근 14일'], ['30', '최근 30일']], String(weekly.days));
     asOf.addEventListener('change', function () { weekly.asOf = asOf.value || today(); weekly.body = null; render(); });
     days.addEventListener('change', function () { weekly.days = +days.value; weekly.body = null; render(); });
     main.appendChild(h('section', { class: 'card no-print' }, h('div', { class: 'filters' }, field('기준일', asOf), field('집계 기간', days)),
-      h('p', { class: 'note', style: 'margin-top:10px' }, '기준일까지의 누적 가동시간을 모델 정보의 목표 가동시간과 비교합니다. 목표는 「시험일지 정리 → 모델 정보」에서 적습니다.')));
+      h('p', { class: 'note', style: 'margin-top:10px' }, '매주 수요일 R&D 전체에 보내는 정기 보고입니다. 기준일은 가장 최근 수요일로 열립니다. 목표 가동시간은 모델 정보에서 정하며 적지 않으면 1000시간(특화 1500시간)입니다.' + (lastDate ? ' 마지막 일지: ' + lastDate + '.' : ''))));
     var rep = L.weeklyReport(db.rows, db.masters, weekly.asOf, weekly.days);
     var svg = L.progressSvg(rep, { width: 760 });
     var graph = h('div', { class: 'svg-box' });
@@ -929,7 +937,8 @@
       var ul = h('ul', { class: 'miss-list' });
       m.weekIssues.forEach(function (i) {
         var r = db.rows.find(function (x) { return x.id === i.id; });
-        ul.appendChild(h('li', null, h('a', { href: '#', onclick: function (e) { e.preventDefault(); openTpr(r); } }, i.date + (i.shift ? '(' + i.shift + ')' : '')), ' ' + i.text + (i.driver ? ' — ' + i.driver : '')));
+        ul.appendChild(h('li', null, h('a', { href: '#', onclick: function (e) { e.preventDefault(); openTpr(r); } }, i.date + (i.shift ? '(' + i.shift + ')' : '')), ' ' + i.text + (i.driver ? ' — ' + i.driver : '') + ' ',
+          h('button', { type: 'button', class: 'linkish no-print', onclick: function () { alertDialog(r); } }, '즉시 알림 메일')));
       });
       iss.appendChild(h('h3', null, m.label + ' · ' + m.weekIssues.length + '건'));
       iss.appendChild(ul);
@@ -939,7 +948,7 @@
     // 메일
     var mail = L.weeklyMail(rep, { sign: st.mailSign || '감사합니다.' });
     if (weekly.body == null) weekly.body = mail.body;
-    var to = h('input', { type: 'text', name: 'mailTo', value: st.mailTo || '', placeholder: '예: design1@회사, design2@회사 (쉼표로 구분)' });
+    var to = h('input', { type: 'text', name: 'mailTo', value: st.mailTo || '', placeholder: '예: R&D 전체 메일 그룹 주소 (쉼표로 여러 개)' });
     to.addEventListener('change', function () { st.mailTo = to.value.trim(); save(); });
     var sign = h('input', { type: 'text', name: 'mailSign', value: st.mailSign || '', placeholder: '예: 내구시험 담당 드림' });
     sign.addEventListener('change', function () { st.mailSign = sign.value.trim(); weekly.body = null; save(); render(); });
@@ -947,7 +956,7 @@
     var body = h('textarea', { name: 'body', rows: '14', class: 'mono' }); body.value = weekly.body;
     body.addEventListener('input', function () { weekly.body = body.value; });
     main.appendChild(h('section', { class: 'card no-print' }, h('h2', null, '3. 설계담당자 메일'),
-      h('p', { class: 'note' }, '받는 사람과 끝인사는 이 브라우저에 기억합니다. 본문은 고쳐 써도 됩니다. 그래프는 「그래프 PNG 저장」으로 받아 메일에 첨부해 주세요(메일 프로그램이 첨부를 자동으로 넣지는 못합니다).'),
+      h('p', { class: 'note' }, '받는 사람과 끝인사는 이 브라우저에 기억합니다. 본문은 고쳐 써도 됩니다. 그래프는 「그래프 PNG 저장」으로 받고, 기간 내 내구시험일지(PDF)와 함께 메일에 첨부해 주세요(메일 프로그램이 첨부를 자동으로 넣지는 못합니다).'),
       h('div', { class: 'form-grid' }, field('받는 사람', to), field('끝인사(서명)', sign), h('div', { class: 'span-all' }, field('제목', subj)), h('div', { class: 'span-all' }, field('본문', body))),
       h('div', { class: 'btn-row', style: 'margin-top:12px' },
         h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { copyText(subj.value + '\n\n' + body.value, '제목과 본문을 복사했습니다'); } }, '제목·본문 복사'),
@@ -959,6 +968,32 @@
           else location.href = full;
         } }, '메일 프로그램으로 열기'),
         h('button', { type: 'button', class: 'btn', onclick: function () { weekly.body = null; render(); } }, '본문 다시 만들기'))));
+  }
+  // 문제점 즉시 알림(수시) — 설계 담당자·직책자에게 사진과 함께
+  function alertDialog(r) {
+    if (!r) return;
+    var st = settings();
+    var u = units().find(function (x) { return x.key === L.masterKey(r.model, r.unit_no); });
+    var cum = u ? L.unitSummary(db.rows, u, { to: r.date }).totals.hours : null;
+    var mail = L.issueAlertMail(r, { cum: cum, target: u ? u.targetHours : null, sign: st.mailSign });
+    var to = h('input', { type: 'text', value: st.alertTo || '', placeholder: '설계 담당자·직책자 메일 (쉼표로 여러 개)' });
+    to.addEventListener('change', function () { st.alertTo = to.value.trim(); save(); });
+    var subj = h('input', { type: 'text', value: mail.subject });
+    var body = h('textarea', { rows: '12', class: 'mono' }); body.value = mail.body;
+    openDialog('문제점 즉시 알림 메일', [
+      h('p', { class: 'note' }, '문제점이 생기면 확인 즉시 사진과 함께 설계 담당자·직책자에게 보내는 메일입니다. 사진은 메일 프로그램에서 직접 첨부해 주세요.'),
+      h('div', { class: 'form-grid one' }, field('받는 사람', to), field('제목', subj), field('본문', body))
+    ], [
+      h('button', { type: 'button', class: 'btn', onclick: closeDialog }, '닫기'),
+      h('button', { type: 'button', class: 'btn', onclick: function () { copyText(subj.value + '\n\n' + body.value, '제목과 본문을 복사했습니다'); } }, '제목·본문 복사'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: function () {
+        st.alertTo = to.value.trim(); save();
+        var href = 'mailto:' + encodeURIComponent(st.alertTo).replace(/%2C/g, ',').replace(/%40/g, '@') + '?subject=' + encodeURIComponent(subj.value);
+        var full = href + '&body=' + encodeURIComponent(body.value);
+        if (full.length > 1900) { copyText(body.value, '본문이 길어 복사해 두었습니다. 메일 창에 붙여 넣어 주세요'); location.href = href; }
+        else location.href = full;
+      } }, '메일 프로그램으로 열기')
+    ]);
   }
   function savePng(svg, name) {
     var img = new Image();
@@ -1019,20 +1054,15 @@
     if (tab === 'fuel') renderFuelBill(main, st, meta, fileTail); else renderHourBill(main, st, meta, fileTail);
   }
   function renderHourBill(main, st, meta, fileTail) {
-    var sc = st.surcharge || {};
-    function scIn(k) {
-      var el = numIn('sc_' + k, sc[k] != null ? sc[k] : L.DEFAULT_SURCHARGE[k], { 'aria-label': L.shiftLabel(k) + ' 과급 %' });
-      el.addEventListener('change', function () { st.surcharge = Object.assign({}, st.surcharge || {}); st.surcharge[k] = el.value.trim(); save(); render(); });
-      return h('div', { class: 'unit-in' }, el, h('span', null, '%'));
-    }
     var rateIn = numIn('rate', st.rate || '', { placeholder: '예: 24,400' });
     rateIn.addEventListener('change', function () { st.rate = rateIn.value.trim(); save(); render(); });
     main.appendChild(h('section', { class: 'card' }, h('h2', null, '단가와 과급'),
       h('div', { class: 'form-grid three' }, field('단가(원/h)', rateIn, '계약 단가를 직접 적어 주세요. 도구가 정해 두지 않습니다'),
-        field('주간 과급', scIn('주')), field('야간 과급', scIn('야')), field('휴일 과급', scIn('휴'))),
-      h('p', { class: 'note' }, '소계 = (장비 실가동 금월 + TPR 작성 및 점검 + 특화 시험) × (1 + 과급), 기성금액 = 소계 × 단가(원 단위 반올림). 특화 시험 = 일지의 「배터리 충전 점검」 + 「특회 장비수리」 시간입니다(확인 필요).')));
+        h('div', { class: 'field span-2' }, h('span', null, '과급 (계약서 고정값)'),
+          h('p', { class: 'fixed-val' }, '주간 ' + L.DEFAULT_SURCHARGE['주'] + '% · 야간 ' + L.DEFAULT_SURCHARGE['야'] + '% · 휴일 ' + L.DEFAULT_SURCHARGE['휴'] + '%'))),
+      h('p', { class: 'note' }, '소계 = (장비 실가동 금월 + TPR 작성 및 점검 + 특화 시험) × (1 + 과급), 기성금액 = 소계 × 단가(원 단위 반올림). 특화 시험 = 일지의 「배터리 충전 점검」 + 「특화 시험(동력전달 특화 등)·장비수리」 시간입니다.')));
     var lines = L.hourBillingLines(db.rows, db.masters, meta.from, meta.to);
-    var b = L.calcHourBilling(lines, { rate: st.rate, surcharge: st.surcharge });
+    var b = L.calcHourBilling(lines, { rate: st.rate });
     var status = L.hourBillingStatus(db.rows, db.masters, meta.from, meta.to);
     meta.status = status;
     var tb = h('tbody');
@@ -1075,18 +1105,19 @@
     var bk = numIn('bottleKg', st.bottleKg || 15);
     bk.addEventListener('change', function () { st.bottleKg = bk.value.trim(); save(); render(); });
     var pg = h('div', { class: 'grid-2' });
-    L.FUELS.forEach(function (f) {
+    L.BILL_ITEMS.forEach(function (k) {
+      var f = { key: k };
       var p = prices[f.key] = prices[f.key] || { price: '', unit: L.fuelUnit(f.key), source: '', checked: '' };
       function pb(el, k) { el.addEventListener('change', function () { p[k] = el.value.trim(); save(); render(); }); return el; }
       pg.appendChild(h('div', { class: 'card', style: 'margin:0' }, h('h3', null, f.key + ' (원/' + L.fuelUnit(f.key) + ', VAT 포함)'),
         h('div', { class: 'form-grid' },
-          field('단가', pb(numIn('price_' + f.key, p.price, { placeholder: f.key === 'LPG' ? '예: 2,505' : '예: 1,500' }), 'price')),
+          field('단가', pb(numIn('price_' + f.key, p.price, { placeholder: f.key === 'LPG' ? '예: 2,505' : f.key === L.UREA ? '예: 1,200' : '예: 1,500' }), 'price')),
           field('조회일', pb(h('input', { type: 'date', value: p.checked }), 'checked')),
           h('div', { class: 'span-all' }, field('가격 출처', pb(h('input', { type: 'text', value: p.source, placeholder: '예: 오피넷 월평균, 충전소 영수증' }), 'source'))))));
     });
     main.appendChild(h('section', { class: 'card' }, h('h2', null, '연료 단가 (' + meta.from.replace(/-/g, '.') + ' ~ ' + meta.to.replace(/-/g, '.') + ')'),
       h('p', { class: 'note' }, '그 기간의 평균 가격을 직접 적어 주세요. 도구가 가격을 정해 두거나 가져오지 않습니다. 출처·조회일은 엑셀 「단가」 시트에 남습니다.'), pg,
-      h('div', { class: 'form-grid three', style: 'margin-top:14px' }, field('LPG 통당 무게(kg)', bk, '비고 「62통」 계산과 통 수로 적은 일지에 씁니다'))));
+      h('div', { class: 'form-grid three', style: 'margin-top:14px' }, field('LPG 통당 무게(kg)', bk, '15kg 규격 통(확인됨). 비고 「62통」 계산과 통 수로 적은 일지에 씁니다'))));
     var lines = L.fuelBillingLines(db.rows, db.masters, meta.from, meta.to);
     var b = L.calcFuelBilling(lines, prices, { bottleKg: st.bottleKg });
     var tb = h('tbody');
@@ -1097,13 +1128,13 @@
     });
     var t = b.totals;
     main.appendChild(h('section', { class: 'card' }, h('h2', null, '개발장비 내구시험 연료 주입 청구서'),
-      !b.lines.length ? h('p', null, '이 기간에 경유·LPG 를 쓴 모델이 없습니다(전동 모델만 있거나 주입 기록이 없음).') : null,
+      !b.lines.length ? h('p', null, '이 기간에 경유·LPG·요소수를 쓴 모델이 없습니다(전동 모델만 있거나 주입 기록이 없음).') : null,
       b.missingPrice.length ? h('div', { class: 'alert warn' }, '단가가 비어 금액을 계산하지 못한 연료: ' + b.missingPrice.join(', ')) : null,
       h('p', { class: 'bill-total' }, '주유 금액 : ', b.missingPrice.length ? '단가를 적으면 계산됩니다' : '₩' + L.fmtNum(t.amount, 0) + ' (VAT 포함)'),
       h('div', { class: 'table-wrap' }, h('table', { class: 'list bill' },
         h('thead', null,
           h('tr', null, h('th', { rowspan: '2' }, '순'), h('th', { rowspan: '2' }, '기종'), h('th', { rowspan: '2' }, '유종'), h('th', { colspan: '2', class: 'center' }, '장비 가동(h)'),
-            h('th', { rowspan: '2' }, '가스/경유 사용량'), h('th', { rowspan: '2' }, '단가(원)'), h('th', { rowspan: '2' }, '금액(원)'), h('th', { rowspan: '2' }, '과제번호'), h('th', { rowspan: '2' }, '비고')),
+            h('th', { rowspan: '2' }, '가스/경유/요소수 사용량'), h('th', { rowspan: '2' }, '단가(원)'), h('th', { rowspan: '2' }, '금액(원)'), h('th', { rowspan: '2' }, '과제번호'), h('th', { rowspan: '2' }, '비고')),
           h('tr', null, h('th', null, '총누적'), h('th', null, '금월'))),
         tb,
         h('tfoot', null, h('tr', null, h('td', { colspan: '5' }, '계'),
@@ -1112,7 +1143,7 @@
       h('div', { class: 'btn-row', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'btn btn-primary', disabled: !b.lines.length, onclick: function () {
         writeXlsx('기성청구서_연료비' + fileTail, L.fuelBillingSheets(b, meta, db.rows, db.masters, prices));
       } }, '연료비 청구서 엑셀 내려받기')),
-      h('p', { class: 'note' }, '시트: 청구서 · 기종별 연료 주입 현황 · 단가(출처·조회일). 연료 칸이 빈 일지는 「시험일지 정리 → 모델 정보」의 연료로 봅니다.')));
+      h('p', { class: 'note' }, '시트: 청구서 · 기종별 연료(요소수) 주입 현황 · 단가(출처·조회일). 요소수는 청구 대상이라 따로 한 줄로 올립니다. 연료 칸이 빈 일지는 「시험일지 정리 → 모델 정보」의 연료로 봅니다.')));
   }
 
   // ── 대시보드 ──────────────────────────────────────────────

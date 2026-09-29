@@ -125,6 +125,11 @@ begin
   insert into public.period_fuel_prices (period_from, period_to, fuel, price, unit, source)
   values ('2025-04-30', '2025-05-30', 'LPG', 2505, 'kg', '예시');
 
+  insert into public.period_fuel_prices (period_from, period_to, fuel, price, unit) values ('2025-04-30', '2025-05-30', '요소수', 1200, 'L');
+  insert into public.unit_masters (model, unit_no, extended) values ('MODEL-Z', '', true);
+  perform public._assert((select extended and target_hours is null from public.unit_masters where model = 'MODEL-Z'),
+    '특화 모델은 목표를 비워 두고 extended 로 표시할 수 있다');
+
   v_raised := false;
   begin insert into public.period_fuel_prices (period_from, period_to, fuel) values ('2025-05-30', '2025-04-30', '경유');
   exception when check_violation then v_raised := true; end;

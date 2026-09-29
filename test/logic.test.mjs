@@ -401,7 +401,8 @@ test('주간 문제점·메일 본문·그래프', () => {
   const rep = L.weeklyReport(rows, { k: SMASTER }, '2025-07-29');
   assert.equal(rep.models[0].weekIssues.length, 1);
   const mail = L.weeklyMail(rep);
-  assert.ok(mail.subject.includes('2025-07-29 기준'));
+  assert.ok(mail.subject.includes('2025-07-29(화) 기준'));
+  assert.ok(mail.body.includes('내구시험일지(PDF) 11장 — MODEL-Y #1 11장')); // 07-23 주·야, 24 주·야, 25 주·야, 26 휴, 28 주·야, 29 주 = 10장 + 문제점 일지 1장
   assert.ok(mail.body.includes('MODEL-Y #1: 199.5h / 200.0h (99.8%)'));
   assert.ok(mail.body.includes('07-28(야) 전륜 <타이어> 편마모'));
   const svg = L.progressSvg(rep);
@@ -494,7 +495,7 @@ test('단가가 비면 금액 없음(가격을 지어내지 않음)', () => {
   assert.deepEqual(b.missingPrice, ['LPG']);
   assert.equal(b.totals.amount, 0);
 });
-test('일지 → 연료 줄: 연료 칸이 비면 모델 정보의 연료, 기간 밖 제외, 요소수는 비고', () => {
+test('일지 → 연료 줄: 연료 칸이 비면 모델 정보의 연료, 기간 밖 제외, 요소수는 따로 청구 줄', () => {
   const rs = [
     row({ date: '2026-08-03', model: 'G', driver: 'a', run_hours: 7, fuel_qty: 45 }),
     row({ date: '2026-08-05', model: 'G', driver: 'a', run_hours: 6, fuel_type: 'LPG', fuel_qty: 30 }),
@@ -502,9 +503,14 @@ test('일지 → 연료 줄: 연료 칸이 비면 모델 정보의 연료, 기�
     row({ date: '2026-08-05', model: 'D', driver: 'a', run_hours: 6, fuel_type: '경유', fuel_qty: 150.5, urea_l: 20 })
   ];
   const ls = L.fuelBillingLines(rs, { g: { model: 'G', fuel: 'LPG' } }, '2026-08-01', '2026-08-31');
-  assert.deepEqual(ls.map(l => [l.label, l.fuel, l.qty, l.month, l.cum]), [['D', '경유', 150.5, 6, 6], ['G', 'LPG', 75, 13, 13]]);
-  const b = L.calcFuelBilling(ls, { LPG: { price: 2000 }, '경유': { price: 1500 } });
-  assert.deepEqual(b.lines.map(l => [l.amount, l.note]), [[225750, '요소수 20.0L'], [150000, '5통']]);
+  assert.deepEqual(ls.map(l => [l.label, l.fuel, l.qty, l.month, l.cum]), [['D', '경유', 150.5, 6, 6], ['D', '요소수', 20, 6, 6], ['G', 'LPG', 75, 13, 13]]);
+  const b = L.calcFuelBilling(ls, { LPG: { price: 2000 }, '경유': { price: 1500 }, '요소수': { price: 1200 } });
+  assert.deepEqual(b.lines.map(l => [l.amount, l.note]), [[225750, ''], [24000, ''], [150000, '5통']]);
+  assert.equal(b.totals.amount, 399750); // 225,750 + 24,000 + 150,000
+  assert.deepEqual(L.calcFuelBilling(ls, { LPG: { price: 2000 }, '경유': { price: 1500 } }).missingPrice, ['요소수']);
+  const sh = L.fuelBillingSheets(b, { from: '2026-08-01', to: '2026-08-31' }, rs, {}, {});
+  assert.ok(Object.keys(sh).includes('D 요소수'));
+  assert.deepEqual(sh['단가'].aoa.map(r => r[0]), ['연료', '경유', 'LPG', '요소수']);
 });
 test('숫자 표기', () => {
   assert.equal(L.fmtNum(24901176, 0), '24,901,176');
@@ -519,6 +525,41 @@ test('예시 데이터: 모델 정보 3개, 야간 일지·목표 도달 모델 
   assert.ok(S.some(r => r.shift === '야'));
   const st = L.hourBillingStatus(S, M, '2026-08-01', '2026-08-31');
   assert.deepEqual(st.done, ['DEMO-L30(예시) 1호기']);
+});
+
+console.log('2026-09-29 오후 수강생 답 반영');
+test('목표 가동시간 기본 1000h, 특화 +500h = 1500h, 직접 적으면 그 값', () => {
+  assert.equal(L.normMaster({ model: 'A' }).targetHours, 1000);
+  assert.equal(L.normMaster({ model: 'A' }).targetDefault, true);
+  assert.equal(L.normMaster({ model: 'A', extended: true }).targetHours, 1500);
+  assert.equal(L.normMaster({ model: 'A', targetHours: '200 hr' }).targetHours, 200);
+  const rep = L.weeklyReport([row({ date: '2026-09-01', model: 'N', driver: 'x', run_hours: 250 })], {}, '2026-09-01');
+  assert.equal(rep.models[0].target, 1000);
+  assert.equal(rep.models[0].ratio, 0.25);
+});
+test('과급은 계약 고정값 야간 19% · 휴일 30%', () => {
+  assert.deepEqual(L.DEFAULT_SURCHARGE, { '주': 0, '야': 19, '휴': 30 });
+});
+test('정리 엑셀 「특화 장비 수리」 열 → 특화 시험 칸', () => {
+  assert.equal(L.matchField('특화 장비 수리'), 'special_h');
+  assert.equal(L.matchField('특회 장비 수리'), 'special_h');
+});
+test('주간 보고 기준일 기본값 = 오늘을 포함한 가장 최근 수요일', () => {
+  assert.equal(L.lastWednesday('2026-09-29'), '2026-09-23'); // 화
+  assert.equal(L.lastWednesday('2026-09-30'), '2026-09-30'); // 수
+  assert.equal(L.lastWednesday('2026-10-04'), '2026-09-30'); // 일
+});
+test('문제점 즉시 알림 메일: 모델·발생 시각·문제점·점검 「유」 항목·사진', () => {
+  const r = L.tprToRow({ ...TPR, problems: [{ text: '마스트 좌측 체인 소음이 커져 점검이 필요함(30자 넘는 문장 예시)', note: '사진1' }], checks: ['무', '유'], photo: 'IMG_01.jpg' });
+  const m = L.issueAlertMail(r, { cum: 945.5, target: 1000 });
+  assert.ok(m.subject.startsWith('[내구시험 문제점] MODEL-X #4 2025-01-03(주) — 마스트'));
+  assert.ok(m.subject.endsWith('…'));
+  assert.ok(m.body.includes('■ 발생: 2025-01-03(금) 주간'));
+  assert.ok(m.body.includes('■ 누적 가동시간: 945.5h / 목표 1,000.0h'));
+  assert.ok(m.body.includes('   1) 마스트 좌측 체인'));
+  assert.ok(m.body.includes('② 유압/동력전달'));
+  assert.ok(!m.body.includes('① 성능'));
+  assert.ok(m.body.includes('첨부: 현장 사진 (IMG_01.jpg)'));
 });
 
 console.log('\n' + passed + '개 통과' + (process.exitCode ? ' · 실패 있음' : ''));

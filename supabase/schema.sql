@@ -70,7 +70,7 @@ alter table public.journal_rows add column if not exists basic_cycles    numeric
 alter table public.journal_rows add column if not exists bump_cycles     numeric(8,1);              -- 요철 사이클(회)
 alter table public.journal_rows add column if not exists battery_check_h numeric(6,2);              -- 배터리 충전 점검(h)
 alter table public.journal_rows add column if not exists inspect_h       numeric(6,2);              -- 장비 점검·TPR 작성(h)
-alter table public.journal_rows add column if not exists special_h       numeric(6,2);              -- 특화(특회) 장비수리(h)
+alter table public.journal_rows add column if not exists special_h       numeric(6,2);              -- 특화 시험(동력전달 특화 등)·장비수리(h)
 alter table public.journal_rows add column if not exists heater_h        numeric(6,2);              -- 히터 가동(h)
 alter table public.journal_rows add column if not exists ac_h            numeric(6,2);              -- 에어컨 가동(h)
 alter table public.journal_rows add column if not exists urea_l          numeric(10,2);             -- 요소수 주입량(L)
@@ -120,13 +120,16 @@ create table if not exists public.unit_masters (
   constraint unit_masters_pkey primary key (owner_id, model, unit_no)
 );
 
+-- 2026-09-29 오후 수강생 답: 목표는 보통 1000h, 특화하면 +500h(1500h). target_hours 가 비면 도구가 extended 로 1000/1500 을 정한다
+alter table public.unit_masters add column if not exists extended boolean not null default false;
+
 -- 기성 기간별 연료 단가 — 청구 기간이 달력 월과 다르므로(예: 04.30~05.30) 시작·종료일로 묶는다
 create table if not exists public.period_fuel_prices (
   id          bigint generated always as identity primary key,
   period_from date not null,
   period_to   date not null,
-  fuel        text not null check (fuel in ('경유', 'LPG')),
-  price       numeric(12,2) check (price >= 0),                       -- VAT 포함 원/kg(LPG)·원/L(경유)
+  fuel        text not null check (fuel in ('경유', 'LPG', '요소수')),  -- 요소수도 청구 대상(수강생 답)
+  price       numeric(12,2) check (price >= 0),                       -- VAT 포함 원/kg(LPG)·원/L(경유·요소수)
   unit        text not null default 'L' check (unit in ('L', 'kg')),
   source      text not null default '',
   checked     date,
@@ -137,6 +140,10 @@ create table if not exists public.period_fuel_prices (
   -- ⚠ 프런트에서 upsert 할 때 onConflict 를 'owner_id,period_from,period_to,fuel' 로 반드시 지정할 것
   constraint period_fuel_prices_key unique (owner_id, period_from, period_to, fuel)
 );
+
+-- 오전판 스키마를 이미 적용한 DB 도 요소수를 받도록 연료 제약을 이름으로 다시 만든다(재실행 안전)
+alter table public.period_fuel_prices drop constraint if exists period_fuel_prices_fuel_check;
+alter table public.period_fuel_prices add  constraint period_fuel_prices_fuel_check check (fuel in ('경유', 'LPG', '요소수'));
 
 -- 불러오기 설정 — 사람마다 한 행
 create table if not exists public.user_settings (

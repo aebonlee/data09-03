@@ -248,3 +248,5 @@ ol.plain { list-style: none; padding: 0; margin: 0 0 12px; }
 @media (max-width: 560px) {
   .save-bar { position: static; box-shadow: none; }
 }
+.fixed-val { margin: 0; min-height: 44px; display: flex; align-items: center; font-weight: 700; }
+.form-grid .check.span-all { grid-column: 1 / -1; }
