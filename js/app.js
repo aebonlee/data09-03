@@ -189,7 +189,7 @@
       return;
     }
 
-    var issues = L.validateRows(db.rows);
+    var issues = L.validateRows(db.rows, { holidays: holidays() });
     var sum = L.issueSummary(issues);
     var byId = issuesById(issues);
 
@@ -313,7 +313,7 @@
       if (f.key === 'issue') fl.classList.add('span-all');
       form.appendChild(fl);
     });
-    var msgs = r ? (issuesById(L.validateRows(db.rows))[r.id] || []) : [];
+    var msgs = r ? (issuesById(L.validateRows(db.rows, { holidays: holidays() }))[r.id] || []) : [];
     var content = [
       msgs.length ? h('div', { class: 'alert error' }, h('ul', { class: 'miss-list' }, msgs.map(function (i) { return h('li', null, i.msg); }))) : null,
       r && r._src ? h('p', { class: 'note' }, '가져온 곳: ' + r._src) : null,
@@ -457,7 +457,7 @@
 
     // 3. 미리보기와 확정
     var conv = convertImport();
-    var issues = L.validateRows(conv.rows.map(function (r, i) { return Object.assign({ id: 'p' + i }, r); }));
+    var issues = L.validateRows(conv.rows.map(function (r, i) { return Object.assign({ id: 'p' + i }, r); }), { holidays: holidays() });
     var sum = L.issueSummary(issues);
     var prev = h('section', { class: 'card' }, h('h2', null, '3. 미리보기와 확정'));
     if (!imp.mapping.date) prev.appendChild(h('div', { class: 'alert error' }, '「일자」 열을 연결해야 합니다.'));
@@ -492,7 +492,7 @@
           if (!db.masters[k]) db.masters[k] = m;
         });
         save();
-        var s2 = L.issueSummary(L.validateRows(db.rows));
+        var s2 = L.issueSummary(L.validateRows(db.rows, { holidays: holidays() }));
         imp = null;
         location.hash = '#/data';
         toast(c.rows.length + '행을 불러왔습니다. 검사 오류 ' + s2.error + '건 · 확인 ' + s2.warn + '건');
@@ -508,6 +508,26 @@
   // ── 공통: 모델·호기 ───────────────────────────────────────
   function units() { return L.unitList(db.rows, db.masters); }
   function settings() { db.settings = db.settings || {}; return db.settings; }
+  // 공휴일 목록(마감일·휴일 근무 계산용) — 사용자가 고친 글자가 있으면 그것, 없으면 올해·내년 초안
+  function holidayText() {
+    var st = settings();
+    if (typeof st.holidays === 'string') return st.holidays;
+    var y = new Date().getFullYear();
+    return L.defaultHolidayText([y, y + 1]);
+  }
+  function holidays() { return L.parseHolidays(holidayText()).map; }
+  // 작성일 옆에 붙이는 요일·휴일 안내
+  function dayNote(date) {
+    if (!date) return '';
+    var dk = L.dayKind(date, holidays());
+    var s = '(' + L.weekdayKo(date) + ')';
+    if (dk.kind === '토') return s + ' 휴일 근무 — 과급 30%';
+    if (dk.kind === '일') return s + ' 일요일 — 계약상 휴일 근무는 토요일 주간뿐입니다';
+    if (dk.kind === '공휴일') return s + ' ' + dk.name + ' — 계약상 휴일 근무는 토요일 주간뿐입니다';
+    var p = String(date).split('-');
+    if (L.lastWorkday(+p[0], +p[1], holidays()) === date) return s + ' 기성 마감일';
+    return s;
+  }
   function lastLogOf(model, unit, beforeDate, excludeId) {
     var key = L.masterKey(model, unit);
     var list = L.sortLogs(L.rowsOfUnit(db.rows, key).filter(function (r) { return r.id !== excludeId && r.date && (!beforeDate || r.date <= beforeDate); }));
@@ -564,10 +584,17 @@
     main.appendChild(h('div', { class: 'page-head' }, h('h1', null, editing ? '시험일지 고치기 (TPR)' : '시험일지 입력 (TPR)'),
       h('div', { class: 'btn-row' },
         h('label', { class: 'btn file-btn' }, tpr.photo ? '다른 사진 띄우기' : '일지 사진 옆에 띄우기', photoInput),
-        h('button', { type: 'button', class: 'btn', onclick: aiDialog }, 'AI로 옮겨 적기(반자동)'),
+        h('button', { type: 'button', class: 'btn', onclick: aiDialog }, 'AI로 옮겨 적기(하루 2장까지)'),
         h('button', { type: 'button', class: 'btn', onclick: function () { tpr.form = blankTpr(null); tpr.editId = null; render(); } }, '새 일지'),
         db.rows.length ? null : sampleButton(false))));
-    main.appendChild(h('p', { class: 'note' }, '운전자가 쓴 「내구시험일지 및 문제점 보고서(TPR)」와 같은 순서로 칸을 두었습니다. 사진을 옆에 띄워 두고 위에서부터 옮겨 적어 주세요. 사진은 저장하지 않고 이 창에서만 보여 줍니다.'));
+    main.appendChild(h('p', { class: 'note' }, '운전자가 쓴 「내구시험일지 및 문제점 보고서(TPR)」와 같은 순서로 칸을 두었습니다. 사진을 옆에 띄워 두고 위에서부터 옮겨 적어 주세요. 사진은 저장하지 않고 이 창에서만 보여 주며, 외부로 보내지 않습니다(TPR 은 대외비라 이 방법이 기본입니다).'));
+    var fDate = L.parseDate(f.date);
+    if (fDate && !f.provisional) {
+      var fp = fDate.split('-');
+      if (L.lastWorkday(+fp[0], +fp[1], holidays()) === fDate) {
+        main.appendChild(h('div', { class: 'alert warn' }, fDate + '(' + L.weekdayKo(fDate) + ')는 기성 마감일입니다. 근무가 끝나기 전에 가동시간·연료 등 기성에 필요한 값만 적고 아래 「마감 전 가입력(예상치)」에 표시해 저장해 주세요. 가동이 끝나면 이 일지를 다시 열어 확정 값으로 저장합니다.'));
+      }
+    }
 
     var layout = h('div', { class: 'tpr-layout' + (tpr.photo ? ' with-photo' : '') });
     if (tpr.photo) {
@@ -593,9 +620,9 @@
     var dl = h('datalist', { id: 'dlModels' }, us.map(function (u) { return h('option', { value: u.model }); }));
     var dlU = h('datalist', { id: 'dlUnits' }, us.map(function (u) { return u.unit_no ? h('option', { value: u.unit_no }) : null; }));
     var dlW = h('datalist', { id: 'dlWeather' }, ['맑음', '흐림', '비', '눈', '흐림/비'].map(function (w) { return h('option', { value: w }); }));
-    var wd = h('span', { class: 'weekday' }, f.date ? '(' + L.weekdayKo(L.parseDate(f.date)) + ')' : '');
+    var wd = h('span', { class: 'weekday' }, dayNote(L.parseDate(f.date)));
     var dateIn = bind(h('input', { type: 'date', name: 'date', value: L.parseDate(f.date) || '' }), 'date');
-    dateIn.addEventListener('change', function () { wd.textContent = dateIn.value ? '(' + L.weekdayKo(dateIn.value) + ')' : ''; });
+    dateIn.addEventListener('change', function () { wd.textContent = dayNote(dateIn.value); });
     var shiftBox = h('div', { class: 'radio-row', role: 'radiogroup', 'aria-label': '주/야/휴' }, L.SHIFTS.map(function (s) {
       var rb = h('input', { type: 'radio', name: 'shift', value: s.key, checked: f.shift === s.key });
       rb.addEventListener('change', function () { if (rb.checked) f.shift = s.key; });
@@ -722,15 +749,17 @@
     function doSave(next) {
       var nr = L.tprToRow(f, { bottleKg: L.parseNum(settings().bottleKg) || 15 });
       if (!nr.date || !nr.model) { toast('작성일과 모델명은 꼭 적어 주세요', true); return; }
+      var old = tpr.editId ? db.rows.find(function (x) { return x.id === tpr.editId; }) : null;
+      var wasProvisional = !!(old && old.provisional);
+      nr = L.applyProvisional(nr, old, !!f.provisional, today());
       if (tpr.editId) {
         nr.id = tpr.editId;
-        var old = db.rows.find(function (x) { return x.id === tpr.editId; });
         if (old && old._src) nr._src = old._src;
         db.rows = db.rows.map(function (x) { return x.id === tpr.editId ? nr : x; });
       } else addRows([nr]);
       save();
-      var iss = L.validateRows(db.rows).filter(function (i) { return i.id === nr.id; });
-      var msg = (tpr.editId ? '고쳤습니다' : '저장했습니다') + (iss.length ? ' — 확인할 곳 ' + iss.length + '건: ' + iss.map(function (i) { return i.msg; }).join(' / ') : '');
+      var iss = L.validateRows(db.rows, { holidays: holidays() }).filter(function (i) { return i.id === nr.id; });
+      var msg = (nr.provisional ? '가입력(예상치)으로 저장했습니다' : wasProvisional ? '확정 값으로 저장했습니다' : tpr.editId ? '고쳤습니다' : '저장했습니다') + (iss.length ? ' — 확인할 곳 ' + iss.length + '건: ' + iss.map(function (i) { return i.msg; }).join(' / ') : '');
       toast(msg, iss.some(function (i) { return i.level === 'error'; }));
       tpr.editId = null;
       var alertRow = nr.issue ? nr : null;
@@ -741,6 +770,13 @@
       // 문제점이 적힌 일지는 바로 알림 메일을 만들 수 있게 띄웁니다(보내지 않으면 닫기)
       if (alertRow) alertDialog(alertRow);
     }
+    var provCb = h('input', { type: 'checkbox', name: 'provisional', checked: !!f.provisional });
+    provCb.addEventListener('change', function () { f.provisional = provCb.checked; });
+    var editingProv = editing && db.rows.some(function (x) { return x.id === tpr.editId && x.provisional; });
+    formWrap.appendChild(h('div', { class: 'prov-bar' },
+      h('label', { class: 'check' }, provCb, '마감 전 가입력(예상치)'),
+      h('span', { class: 'note' }, '기성 마감일에 근무가 끝나기 전 가동시간·연료만 먼저 적을 때 표시합니다. 가동 후 이 일지를 다시 열어 표시를 끄고 저장하면 확정되고, 예상치와의 차이가 기성처리에 남습니다.'),
+      editingProv ? h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { f.provisional = false; doSave(false); } }, '가동 후 확정 저장') : null));
     formWrap.appendChild(h('div', { class: 'save-bar' },
       h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { doSave(true); } }, editing ? '고쳐 저장하고 다음 일지' : '저장하고 다음 일지'),
       h('button', { type: 'button', class: 'btn', onclick: function () { doSave(false); } }, editing ? '고쳐 저장' : '저장'),
@@ -753,7 +789,7 @@
       var tb = h('tbody');
       recent.forEach(function (r) {
         tb.appendChild(h('tr', { class: 'clickable' + (r.id === tpr.editId ? ' current' : ''), tabindex: '0', onclick: function () { openTpr(r); }, onkeydown: function (e) { if (e.key === 'Enter') openTpr(r); } },
-          h('td', { class: 'num' }, r.date + '(' + L.weekdayKo(r.date) + ')'), h('td', null, r.shift || ''), h('td', null, L.modelLabel(r.model, r.unit_no)),
+          h('td', { class: 'num' }, r.date + '(' + L.weekdayKo(r.date) + ')'), h('td', null, (r.shift || '') + (r.provisional ? ' · 가입력' : '')), h('td', null, L.modelLabel(r.model, r.unit_no)),
           h('td', null, r.driver || ''), h('td', { class: 'num' }, L.effectiveHours(r) == null ? '' : L.fmtNum(L.effectiveHours(r))), h('td', { class: 'wide' }, r.issue || '')));
       });
       main.appendChild(h('section', { class: 'card' }, h('h2', null, '최근 일지 10장'), h('p', { class: 'note' }, '줄을 누르면 양식으로 불러와 고칠 수 있습니다. 전체는 「현황 데이터」에서 봅니다.'),
@@ -762,16 +798,38 @@
   }
   function aiDialog() {
     var prompt = L.tprPrompt();
+    var st = settings();
     var pa = h('textarea', { readonly: true, rows: '8', class: 'mono', 'aria-label': 'AI 에 보낼 요청문' }); pa.value = prompt;
+    var paWrap = field('1. 요청문', pa);
     var ans = h('textarea', { rows: '8', class: 'mono', placeholder: 'AI 가 보낸 JSON 답을 여기에 붙여 넣어 주세요', 'aria-label': 'AI 답' });
     var out = h('div');
-    openDialog('AI로 옮겨 적기 (반자동)', [
+    // TPR 을 외부 AI 에 올리는 것은 사용자가 1~2장임을 확인했을 때만(수강생 답 09-29 오후 늦게)
+    var allow = L.aiPageAllowance(st.aiPages, today());
+    var agree = h('input', { type: 'checkbox', name: 'aiAgree' });
+    var left = h('span', { class: 'note' });
+    var copyBtn = h('button', { type: 'button', class: 'btn btn-sm', disabled: true, onclick: function () {
+      allow = L.aiPageAllowance(st.aiPages, today());
+      if (!allow.ok || !agree.checked) return;
+      copyText(prompt, '요청문을 복사했습니다 — 이 일지 한 장만 올려 주세요');
+      st.aiPages = L.recordAiPage(st.aiPages, today()); save();
+      agree.checked = false; refresh();
+    } }, '요청문 복사(1장)');
+    function refresh() {
+      allow = L.aiPageAllowance(st.aiPages, today());
+      copyBtn.disabled = !allow.ok || !agree.checked;
+      paWrap.hidden = copyBtn.disabled; // 확인 전에는 요청문도 감춥니다
+      left.textContent = allow.ok ? '오늘 ' + allow.used + '장 사용 · ' + allow.left + '장 남음' : '오늘은 ' + allow.limit + '장을 다 썼습니다. 나머지는 사진 옆에 띄워 직접 옮겨 적어 주세요.';
+    }
+    agree.addEventListener('change', refresh);
+    refresh();
+    openDialog('AI로 옮겨 적기 (선택 · 하루 2장까지)', [
+      h('p', { class: 'alert error' }, 'TPR 은 개발 모델 자료라 대외비입니다. 외부 AI(ChatGPT 등)에는 하루 1~2장까지만 올리고, 여러 장은 올리지 마세요. 평소에는 「일지 사진 옆에 띄우기」로 옮겨 적는 것이 기본입니다(사진이 이 브라우저 밖으로 나가지 않습니다).'),
       h('ol', { class: 'prompt-steps' },
-        h('li', null, '아래 요청문을 복사해 ChatGPT 등 회사에서 쓸 수 있는 AI 대화창에 붙여 넣고, 일지 사진을 함께 올려 주세요.'),
+        h('li', null, '아래 확인에 표시하고 요청문을 복사해, 회사에서 쓸 수 있는 AI 대화창에 붙여 넣은 뒤 일지 사진 한 장을 함께 올려 주세요. 요청문에는 일지 내용이 들어 있지 않습니다.'),
         h('li', null, 'AI 가 보낸 JSON 답을 복사해 두 번째 칸에 붙여 넣고 「입력 칸에 채우기」를 눌러 주세요.'),
         h('li', null, '채워진 값을 사진과 한 칸씩 대조한 뒤 저장해 주세요. 손글씨는 잘못 읽을 수 있습니다.')),
-      h('p', { class: 'alert warn' }, '사진에는 작성자 이름·서명이 있습니다. 사내 보안 규정상 외부 AI 에 올려도 되는지 먼저 확인해 주세요. 요청문은 이름을 빼고 답하라고 적어 두었습니다.'),
-      field('1. 요청문', pa), h('div', { class: 'btn-row', style: 'margin:6px 0 12px' }, h('button', { type: 'button', class: 'btn btn-sm', onclick: function () { copyText(prompt, '요청문을 복사했습니다'); } }, '요청문 복사')),
+      h('label', { class: 'check ai-agree' }, agree, '이번에 올리는 것은 일지 1장이고, 오늘 외부 AI 에 올린 TPR 이 2장을 넘지 않습니다. 작성자 이름·서명은 가리거나 빼고 올립니다.'),
+      paWrap, h('div', { class: 'btn-row', style: 'margin:6px 0 12px' }, copyBtn, left),
       field('2. AI 답(JSON)', ans), out
     ], [
       h('button', { type: 'button', class: 'btn', onclick: closeDialog }, '닫기'),
@@ -1024,7 +1082,10 @@
       return;
     }
     var st = settings();
-    if (!bill.from || !bill.to) { var pr = L.prevMonthRange(today()); bill.from = pr.from; bill.to = pr.to; }
+    var hol = holidays();
+    // 기본 기간 = 지금 쌓이고 있는 기성 기간(전달 마감일 다음 날 ~ 이달 마감일). 1일부터 매일 초안이 채워집니다.
+    var open = L.openClosingPeriod(today(), hol);
+    if (!bill.from || !bill.to) { bill.from = open.from; bill.to = open.to; }
     var fFrom = h('input', { type: 'date', name: 'from', value: bill.from });
     var fTo = h('input', { type: 'date', name: 'to', value: bill.to });
     [fFrom, fTo].forEach(function (el) { el.addEventListener('change', function () { bill.from = fFrom.value; bill.to = fTo.value; render(); }); });
@@ -1035,7 +1096,13 @@
       el.addEventListener('change', function () { var a = (st.approvers || ['파트장', '팀장', '부문장']).slice(); a[i] = el.value.trim(); st.approvers = a; save(); });
       return el;
     });
+    var prev = L.closingPeriodOf(L.shiftMonth(open.month, -1), hol);
+    function setPeriod(p) { bill.from = p.from; bill.to = p.to; render(); }
     main.appendChild(h('section', { class: 'card' }, h('h2', null, '청구 기간과 머리 정보'),
+      h('div', { class: 'btn-row', style: 'margin-bottom:10px' },
+        h('button', { type: 'button', class: 'btn btn-sm' + (bill.from === open.from && bill.to === open.to ? ' on' : ''), onclick: function () { setPeriod(open); } }, '이번 기성 기간 (' + open.from.slice(5) + ' ~ ' + open.to.slice(5) + ')'),
+        h('button', { type: 'button', class: 'btn btn-sm' + (bill.from === prev.from && bill.to === prev.to ? ' on' : ''), onclick: function () { setPeriod(prev); } }, '지난 기성 기간 (' + prev.from.slice(5) + ' ~ ' + prev.to.slice(5) + ')')),
+      h('p', { class: 'note' }, '기성 기간은 전달 마감일 다음 날부터 이달 마감일(근무일 기준 월 말일)까지로 잡습니다. 다르게 끊어야 하면 시작일·종료일을 직접 바꿔 주세요.'),
       h('div', { class: 'form-grid three' },
         field('시작일', fFrom), field('종료일', fTo),
         field('업체', sBind(h('input', { type: 'text', value: st.company || '', placeholder: '시험 운영 업체명' }), 'company')),
@@ -1043,13 +1110,15 @@
         h('div', { class: 'field span-2' }, h('span', null, '결재란 직책(이름은 적지 않습니다)'), h('div', { class: 'pair three' }, apprIn))),
       bill.from && bill.to && bill.from > bill.to ? h('div', { class: 'alert error' }, '시작일이 종료일보다 늦습니다.') : null));
     if (!bill.from || !bill.to || bill.from > bill.to) return;
+    renderClosing(main, st, hol);
     var periodRows = db.rows.filter(function (r) { return r.date && r.date >= bill.from && r.date <= bill.to; });
     var ids = {};
     periodRows.forEach(function (r) { ids[r.id] = true; });
-    var errs = L.validateRows(db.rows).filter(function (i) { return ids[i.id] && i.level === 'error'; }).length;
+    var errs = L.validateRows(db.rows, { holidays: holidays() }).filter(function (i) { return ids[i.id] && i.level === 'error'; }).length;
     if (errs) main.appendChild(h('div', { class: 'alert error' }, '이 기간 일지에 검사 오류 ' + errs + '건이 있습니다. ', h('a', { href: '#/data' }, '현황 데이터'), '에서 확인한 뒤 내려받는 것을 권합니다.'));
     if (!periodRows.length) { main.appendChild(h('section', { class: 'card' }, h('p', null, '이 기간에 일지가 없습니다. 기간을 바꿔 주세요.'))); return; }
-    var meta = { company: st.company, team: st.team, from: bill.from, to: bill.to, approvers: st.approvers };
+    var meta = { company: st.company, team: st.team, from: bill.from, to: bill.to, approvers: st.approvers, holidays: hol };
+    renderProvisional(main, st, meta);
     var fileTail = '_' + bill.from.replace(/-/g, '') + '-' + bill.to.replace(/-/g, '') + tag() + '.xlsx';
     if (tab === 'fuel') renderFuelBill(main, st, meta, fileTail); else renderHourBill(main, st, meta, fileTail);
   }
@@ -1059,9 +1128,10 @@
     main.appendChild(h('section', { class: 'card' }, h('h2', null, '단가와 과급'),
       h('div', { class: 'form-grid three' }, field('단가(원/h)', rateIn, '계약 단가를 직접 적어 주세요. 도구가 정해 두지 않습니다'),
         h('div', { class: 'field span-2' }, h('span', null, '과급 (계약서 고정값)'),
-          h('p', { class: 'fixed-val' }, '주간 ' + L.DEFAULT_SURCHARGE['주'] + '% · 야간 ' + L.DEFAULT_SURCHARGE['야'] + '% · 휴일 ' + L.DEFAULT_SURCHARGE['휴'] + '%'))),
+          h('p', { class: 'fixed-val' }, '주간 ' + L.DEFAULT_SURCHARGE['주'] + '% · 야간 ' + L.DEFAULT_SURCHARGE['야'] + '% · 휴일 ' + L.DEFAULT_SURCHARGE['휴'] + '%'),
+          h('small', { class: 'hint' }, '휴일은 일지의 주/야/휴 칸이 아니라 날짜로 정합니다 — 토요일·일요일·공휴일 목록의 날은 휴일 30%, 평일은 주간·야간.'))),
       h('p', { class: 'note' }, '소계 = (장비 실가동 금월 + TPR 작성 및 점검 + 특화 시험) × (1 + 과급), 기성금액 = 소계 × 단가(원 단위 반올림). 특화 시험 = 일지의 「배터리 충전 점검」 + 「특화 시험(동력전달 특화 등)·장비수리」 시간입니다.')));
-    var lines = L.hourBillingLines(db.rows, db.masters, meta.from, meta.to);
+    var lines = L.hourBillingLines(db.rows, db.masters, meta.from, meta.to, { holidays: meta.holidays });
     var b = L.calcHourBilling(lines, { rate: st.rate });
     var status = L.hourBillingStatus(db.rows, db.masters, meta.from, meta.to);
     meta.status = status;
@@ -1094,7 +1164,7 @@
         h('li', null, '3) 월간 가동 시간 : ' + L.fmtNum(t.month) + ' hr'),
         h('li', null, '4) 완료 모델: ' + (status.done.length ? '총 ' + status.done.length + '모델 시험 종료-' + status.done.join(', ') : '없음'))),
       h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn btn-primary', onclick: function () {
-        writeXlsx('기성청구서_운전시간' + fileTail, L.hourBillingSheets(b, meta, db.rows, db.masters));
+        writeXlsx('기성청구서_운전시간' + fileTail, withProvisionalSheet(L.hourBillingSheets(b, meta, db.rows, db.masters), meta));
       } }, '운전시간 기성 청구서 엑셀 내려받기')),
       h('p', { class: 'note' }, '첫 시트 「청구서」는 받은 양식 배치(결재란·M/H 칸 합치기)를 따르고, 이어서 기종별 일자 상세 시트가 붙습니다. 장비 실가동 누적 = 기간 끝날까지의 누적 가동시간입니다(초기 아워미터 제외, 확인 필요).')));
   }
@@ -1141,9 +1211,75 @@
           h('td', { class: 'num' }, Object.keys(t.qty).map(function (k) { return L.fmtNum(t.qty[k]) + ' ' + L.fuelUnit(k); }).join(' · ')), h('td', null, '-'),
           h('td', { class: 'num' }, b.missingPrice.length ? '' : L.fmtNum(t.amount, 0)), h('td', null, ''), h('td', null, 'VAT 포함'))))),
       h('div', { class: 'btn-row', style: 'margin-top:12px' }, h('button', { type: 'button', class: 'btn btn-primary', disabled: !b.lines.length, onclick: function () {
-        writeXlsx('기성청구서_연료비' + fileTail, L.fuelBillingSheets(b, meta, db.rows, db.masters, prices));
+        writeXlsx('기성청구서_연료비' + fileTail, withProvisionalSheet(L.fuelBillingSheets(b, meta, db.rows, db.masters, prices), meta));
       } }, '연료비 청구서 엑셀 내려받기')),
       h('p', { class: 'note' }, '시트: 청구서 · 기종별 연료(요소수) 주입 현황 · 단가(출처·조회일). 요소수는 청구 대상이라 따로 한 줄로 올립니다. 연료 칸이 빈 일지는 「시험일지 정리 → 모델 정보」의 연료로 봅니다.')));
+  }
+
+  // ── 기성 마감 준비(체크리스트·공휴일 목록) ─────────────────
+  // 「마지막 날 하루 만에 기성자료를 만들어야 해서 스트레스」 — 기간 중 매일 초안과 할 일을 보여 줘 마감일에는 가입력만 남게 합니다.
+  function periodPrices(meta) { db.prices = db.prices || {}; return db.prices[meta.from + '~' + meta.to] || {}; }
+  function renderClosing(main, st, hol) {
+    var t = today();
+    var cutoff = bill.to;
+    var list = L.closingChecklist({ rows: db.rows, masters: db.masters, from: bill.from, to: bill.to, cutoff: cutoff, today: t, holidays: hol,
+      rate: st.rate, prices: periodPrices(bill), bottleKg: st.bottleKg });
+    var isCut = L.isWorkday(cutoff, hol) && L.lastWorkday(+cutoff.slice(0, 4), +cutoff.slice(5, 7), hol) === cutoff;
+    var left = t <= cutoff ? L.workdaysBetween(t, cutoff, hol).length : 0;
+    var head = t > cutoff ? '마감일(' + cutoff + ' ' + L.weekdayKo(cutoff) + ')이 지났습니다. 가입력 일지를 확정하고 차이를 확인해 주세요.'
+      : t === cutoff ? '오늘이 마감일입니다. 근무가 끝나기 전에 가동시간·연료만 가입력하고 청구서를 내려받아 주세요.'
+      : '마감일 ' + cutoff + '(' + L.weekdayKo(cutoff) + ')까지 근무일 ' + left + '일 남았습니다(오늘 포함). 아래 청구서는 지금까지 쌓인 일지로 매일 채워지는 초안입니다.';
+    var ul = h('ul', { class: 'checklist' });
+    var STATE = { ok: '완료', todo: '할 일', wait: '마감일에' };
+    list.forEach(function (i) {
+      ul.appendChild(h('li', { class: 'st-' + i.state }, h('span', { class: 'badge' }, STATE[i.state]), h('span', null, i.label), i.detail ? h('small', { class: 'hint' }, i.detail) : null));
+    });
+    var ta = h('textarea', { rows: '8', class: 'mono', 'aria-label': '공휴일 목록' }); ta.value = holidayText();
+    var parsed = L.parseHolidays(ta.value);
+    var holBox = h('details', { class: 'holidays' }, h('summary', null, '공휴일 목록 (마감일·휴일 근무 계산용 — ' + Object.keys(parsed.map).length + '일)'),
+      h('p', { class: 'note' }, '한 줄에 「YYYY-MM-DD 이름」으로 적습니다. 양력 공휴일은 해마다 자동으로 넣고, 음력 명절·대체공휴일·선거일은 2026년분만 초안으로 넣었습니다. 회사 달력과 대조해 고치고, 회사 휴무일(예: 근로자의 날)이나 다음 해 명절은 직접 더해 주세요.'),
+      ta, parsed.bad.length ? h('div', { class: 'alert warn' }, '날짜로 읽지 못한 줄: ' + parsed.bad.join(' / ')) : null,
+      h('div', { class: 'btn-row', style: 'margin-top:8px' },
+        h('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: function () { st.holidays = ta.value; save(); bill.from = ''; bill.to = ''; render(); toast('공휴일 목록을 저장했습니다'); } }, '저장'),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: function () { delete st.holidays; save(); bill.from = ''; bill.to = ''; render(); } }, '초안으로 되돌리기')));
+    main.appendChild(h('section', { class: 'card' }, h('h2', null, '마감 준비'),
+      h('p', null, head),
+      !isCut ? h('p', { class: 'note' }, '종료일이 그달 마감일(근무일 기준 말일)이 아닙니다. 체크리스트는 종료일을 마감일로 보고 계산합니다.') : null,
+      ul, holBox));
+  }
+  // 가입력(예상치) → 확정 대조
+  function renderProvisional(main, st, meta) {
+    var rep = L.provisionalReport(db.rows, meta.from, meta.to);
+    if (!rep.pending.length && !rep.confirmed.length) return;
+    var diff = L.closingDiff(db.rows, db.masters, meta.from, meta.to, { holidays: meta.holidays, rate: st.rate, prices: periodPrices(meta), bottleKg: st.bottleKg });
+    var tb = h('tbody');
+    function add(item, state) {
+      item.diffs.forEach(function (d, i) {
+        tb.appendChild(h('tr', { class: i === 0 ? 'grp' : '' }, h('td', null, i === 0 ? item.date + ' ' + item.shift : ''), h('td', null, i === 0 ? item.label : ''), h('td', null, i === 0 ? state : ''),
+          h('td', null, d.label), h('td', { class: 'num' }, d.est == null ? '' : L.fmtNum(d.est)),
+          h('td', { class: 'num' }, state === '확정 전' || d.fin == null ? '' : L.fmtNum(d.fin)),
+          h('td', { class: 'num' + (d.diff ? ' diff' : '') }, state === '확정 전' ? '' : (d.diff > 0 ? '+' : '') + L.fmtNum(d.diff))));
+      });
+    }
+    rep.pending.forEach(function (i) { add(i, '확정 전'); });
+    rep.confirmed.forEach(function (i) { add(i, '확정 ' + (i.confirmed_at || '')); });
+    function sign(n, d) { return (n > 0 ? '+' : '') + L.fmtNum(n, d); }
+    var sum = ['장비 실가동 금월 ' + L.fmtNum(diff.hours.est) + ' → ' + L.fmtNum(diff.hours.fin) + 'h (' + sign(diff.hours.diff) + ')'];
+    if (diff.amount) sum.push('기성금액 ₩' + L.fmtNum(diff.amount.est, 0) + ' → ₩' + L.fmtNum(diff.amount.fin, 0) + ' (' + sign(diff.amount.diff, 0) + '원)');
+    Object.keys(diff.fuel).forEach(function (k) { if (diff.fuel[k].diff) sum.push(k + ' ' + sign(diff.fuel[k].diff) + ' ' + L.fuelUnit(k)); });
+    if (diff.fuelAmount && diff.fuelAmount.diff) sum.push('주유 금액 ' + sign(diff.fuelAmount.diff, 0) + '원');
+    main.appendChild(h('section', { class: 'card' }, h('h2', null, '마감일 가입력 → 가동 후 확정'),
+      rep.pending.length ? h('div', { class: 'alert warn' }, '확정 전 가입력 일지 ' + rep.pending.length + '장 — 가동이 끝나면 「1. 시험일지 입력」에서 다시 열어 「가동 후 확정 저장」을 눌러 주세요.') : null,
+      h('p', null, '마감 때 낸 값 → 확정 값: ' + sum.join(' · ')),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'list' }, h('thead', null, h('tr', null, ['일자', '모델/호기', '상태', '항목', '가입력(예상치)', '확정', '차이'].map(function (x) { return h('th', null, x); }))), tb)),
+      h('p', { class: 'note' }, '아래 청구서는 확정 값(확정 전이면 가입력 값)으로 계산합니다. 청구서 엑셀에 「가입력·확정 대조」 시트가 함께 붙습니다. 차이를 다음 기성에 반영하는 방법은 확인 중입니다.')));
+  }
+  function withProvisionalSheet(sheets, meta) {
+    var rep = L.provisionalReport(db.rows, meta.from, meta.to);
+    if (!rep.pending.length && !rep.confirmed.length) return sheets;
+    var st = settings();
+    sheets['가입력·확정 대조'] = L.provisionalSheet(rep, L.closingDiff(db.rows, db.masters, meta.from, meta.to, { holidays: meta.holidays, rate: st.rate, prices: periodPrices(meta), bottleKg: st.bottleKg }));
+    return sheets;
   }
 
   // ── 대시보드 ──────────────────────────────────────────────
@@ -1170,7 +1306,7 @@
     var totalMiss = miss.reduce(function (s, g) { return s + g.missing.length; }, 0);
     var totalHours = cum.reduce(function (s, c) { return L.r2(s + c.hours); }, 0);
     var issueRows = L.recentIssues(rows, 1e9);
-    var valid = L.issueSummary(L.validateRows(rows));
+    var valid = L.issueSummary(L.validateRows(rows, { holidays: holidays() }));
 
     function kpi(k, v, unit) { return h('div', { class: 'kpi' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v, unit ? h('small', null, unit) : null)); }
     main.appendChild(h('div', { class: 'kpis' },

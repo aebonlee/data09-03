@@ -562,4 +562,150 @@ test('문제점 즉시 알림 메일: 모델·발생 시각·문제점·점검 �
   assert.ok(m.body.includes('첨부: 현장 사진 (IMG_01.jpg)'));
 });
 
+console.log('\n휴일·기성 마감 (09-29 오후 늦게 답변)');
+const HOL = L.parseHolidays(L.defaultHolidayText([2026])).map;
+test('공휴일 초안: 2026년 양력 고정 8일 + 음력·대체·선거 12일 = 20줄, 사용자가 고친 글자를 읽음', () => {
+  const t = L.defaultHolidayText([2026]);
+  assert.equal(t.split('\n').length, 20);
+  assert.ok(t.includes('2026-09-25 추석'));
+  const p = L.parseHolidays('2026-09-24 추석 연휴\n2026.10.9, 한글날\n회사 창립일\n# 주석 줄\n\n2026-05-01');
+  assert.deepEqual(p.map, { '2026-09-24': '추석 연휴', '2026-10-09': '한글날', '2026-05-01': '공휴일' });
+  assert.deepEqual(p.bad, ['회사 창립일']);
+});
+test('마감일 = 근무일 기준 월 말일: 사진 속 기간 끝 05.30(금)·04.30(수)과 같음', () => {
+  assert.equal(L.lastWorkday(2025, 5, {}), '2025-05-30'); // 5/31 토
+  assert.equal(L.lastWorkday(2025, 4, {}), '2025-04-30');
+  assert.equal(L.lastWorkday(2026, 9, HOL), '2026-09-30');
+  assert.equal(L.lastWorkday(2026, 5, HOL), '2026-05-29'); // 5/31 일, 5/30 토
+  assert.equal(L.lastWorkday(2026, 2, HOL), '2026-02-27');
+  // 말일이 공휴일이면 그 앞 근무일 — 목록은 사용자가 고친 대로
+  assert.equal(L.lastWorkday(2026, 9, { ...HOL, '2026-09-30': '회사 휴무' }), '2026-09-29');
+});
+test('기성 기간 = 전달 마감일 다음 날 ~ 이달 마감일, 오늘이 마감일을 지나면 다음 기간', () => {
+  assert.deepEqual(L.closingPeriodOf('2026-10', HOL), { month: '2026-10', from: '2026-10-01', to: '2026-10-30', cutoff: '2026-10-30' });
+  assert.deepEqual(L.closingPeriodOf('2026-06', HOL), { month: '2026-06', from: '2026-05-30', to: '2026-06-30', cutoff: '2026-06-30' });
+  assert.equal(L.openClosingPeriod('2026-09-29', HOL).to, '2026-09-30');
+  assert.equal(L.openClosingPeriod('2026-09-30', HOL).to, '2026-09-30');
+  assert.equal(L.openClosingPeriod('2026-05-30', HOL).month, '2026-06');
+});
+test('휴일은 날짜로: 토·일·공휴일 → 휴(30%), 평일은 적힌 주/야(휴라고 적혀도 주간)', () => {
+  assert.deepEqual(L.dayKind('2026-09-26', HOL), { kind: '공휴일', name: '추석 연휴' });
+  assert.equal(L.dayKind('2026-10-10', HOL).kind, '토');
+  const b = (date, shift, hol = HOL) => L.billShift({ date, shift }, hol);
+  assert.equal(b('2026-10-10', '주'), '휴');
+  assert.equal(b('2026-10-10', ''), '휴');
+  assert.equal(b('2026-10-06', '휴'), '주');
+  assert.equal(b('2026-10-06', '야'), '야');
+  assert.equal(b('2026-10-09', '주'), '휴');      // 한글날(금)
+  assert.equal(b('2026-10-09', '주', {}), '주');  // 목록에서 빼면 평일
+});
+test('휴일 근무 경고: 토요일 주간만 정상, 일요일·공휴일·휴일 야간·평일 「휴」는 확인', () => {
+  const c = (date, shift) => L.holidayWorkIssues({ date, shift }, HOL).map(i => i.code);
+  assert.deepEqual(c('2026-10-10', '주'), []);
+  assert.deepEqual(c('2026-10-10', '야'), ['holiday_night']);
+  assert.deepEqual(c('2026-10-11', '주'), ['holiday_not_saturday']);
+  assert.deepEqual(c('2026-10-11', '야'), ['holiday_not_saturday', 'holiday_night']);
+  assert.deepEqual(c('2026-09-24', '주'), ['holiday_not_saturday']); // 추석 연휴(목)
+  assert.deepEqual(c('2026-10-06', '휴'), ['holiday_on_workday']);
+  assert.deepEqual(c('2026-10-06', '주'), []);
+  const v = L.validateRows([row({ date: '2026-10-11', model: 'X', driver: 'a', run_hours: 3 })], { holidays: HOL });
+  assert.deepEqual(v.map(i => i.code), ['holiday_not_saturday']);
+});
+test('운전시간 청구서 과급 구분도 날짜로: 주 11h·휴 11h → 110,000 + 143,000 = 253,000원(단가 10,000)', () => {
+  const rs = [
+    row({ date: '2026-10-02', model: 'X', driver: 'a', shift: '주', run_hours: 8 }),
+    row({ date: '2026-10-03', model: 'X', driver: 'a', shift: '주', run_hours: 4 }),  // 토·개천절
+    row({ date: '2026-10-10', model: 'X', driver: 'a', shift: '주', run_hours: 5 }),  // 토
+    row({ date: '2026-10-06', model: 'X', driver: 'a', shift: '휴', run_hours: 3 }),  // 평일인데 휴 → 주
+    row({ date: '2026-10-09', model: 'X', driver: 'a', shift: '주', run_hours: 2 })   // 한글날(금)
+  ];
+  const ls = L.hourBillingLines(rs, {}, '2026-10-01', '2026-10-30', { holidays: HOL });
+  assert.deepEqual(ls.map(l => [l.shift, l.month]), [['주', 11], ['야', 0], ['휴', 11]]);
+  assert.equal(L.calcHourBilling(ls, { rate: 10000 }).totals.amount, 253000); // 11×10,000 + 11×1.3×10,000
+  // 공휴일 목록 없이: 한글날이 평일 → 주 13h·휴 9h → 130,000 + 117,000
+  assert.equal(L.calcHourBilling(L.hourBillingLines(rs, {}, '2026-10-01', '2026-10-30'), { rate: 10000 }).totals.amount, 247000);
+});
+const PX = [
+  row({ date: '2026-10-01', model: 'X', driver: 'a', shift: '주', run_hours: 8, fuel_type: '경유' }),
+  row({ date: '2026-10-30', model: 'X', driver: 'a', shift: '주', run_hours: 6, fuel_type: '경유', fuel_qty: 20 })
+];
+test('마감일 가입력 → 가동 후 확정: 예상치를 남기고 차이를 보여 줌(가동 6 → 8.5h, 경유 20 → 30L)', () => {
+  const pre = L.applyProvisional(PX[1], null, true, '2026-10-30');
+  assert.equal(pre.provisional, true);
+  assert.equal(pre.estimate.run_hours, 6);
+  assert.equal(pre.estimate.fuel_qty, 20);
+  assert.ok(L.validateRows([pre]).some(i => i.code === 'provisional'));
+  const fin = L.applyProvisional({ ...pre, run_hours: 8.5, fuel_qty: 30 }, pre, false, '2026-11-02');
+  assert.equal(fin.provisional, undefined);
+  assert.equal(fin.confirmed_at, '2026-11-02');
+  assert.equal(fin.estimate.run_hours, 6);
+  // 확정 뒤 다시 고쳐도 예상치·확정일은 유지
+  const again = L.applyProvisional({ ...fin, issue: '메모' }, fin, false, '2026-11-05');
+  assert.equal(again.confirmed_at, '2026-11-02');
+  const rep = L.provisionalReport([PX[0], fin], '2026-10-01', '2026-10-30');
+  assert.equal(rep.pending.length, 0);
+  assert.equal(rep.changed, 1);
+  assert.deepEqual(rep.confirmed[0].diffs.filter(d => d.diff).map(d => [d.key, d.est, d.fin, d.diff]), [['run_hours', 6, 8.5, 2.5], ['fuel_qty', 20, 30, 10]]);
+  assert.equal(L.provisionalReport([PX[0], pre], '2026-10-01', '2026-10-30').pending.length, 1);
+});
+test('마감 제출분 vs 확정: 금월 14 → 16.5h, 기성금액 140,000 → 165,000원, 주유 30,000 → 45,000원', () => {
+  const pre = L.applyProvisional(PX[1], null, true, '2026-10-30');
+  const fin = L.applyProvisional({ ...pre, run_hours: 8.5, fuel_qty: 30 }, pre, false, '2026-11-02');
+  const d = L.closingDiff([PX[0], fin], {}, '2026-10-01', '2026-10-30', { holidays: HOL, rate: 10000, prices: { 경유: { price: 1500 } } });
+  assert.deepEqual(d.hours, { est: 14, fin: 16.5, diff: 2.5 });
+  assert.deepEqual(d.amount, { est: 140000, fin: 165000, diff: 25000 });
+  assert.deepEqual(d.fuel['경유'], { est: 20, fin: 30, diff: 10 });
+  assert.deepEqual(d.fuelAmount, { est: 30000, fin: 45000, diff: 15000 });
+  const sh = L.provisionalSheet(L.provisionalReport([PX[0], fin], '2026-10-01', '2026-10-30'), d).aoa;
+  assert.ok(sh.some(r => r[4] === '기성금액(원)' && r[7] === 25000));
+  assert.ok(sh.some(r => r[0] === '2026-10-30' && r[3] === '확정(2026-11-02)' && r[7] === 2.5));
+});
+test('마감 준비 체크리스트: 기간 중엔 빠진 근무일·휴일 근무·단가를 미리, 마감 뒤엔 가입력 확정', () => {
+  const base = ['01', '02', '06', '07', '08', '12', '13'].map(d => row({ date: '2026-10-' + d, model: 'X', driver: 'a', shift: '주', run_hours: 8 }));
+  const sun = row({ date: '2026-10-11', model: 'X', driver: 'a', shift: '주', run_hours: 4 });
+  const masters = { 'X|': { model: 'X', project: 'P-1' } };
+  const st = (list, key) => list.find(i => i.key === key);
+  const mid = L.closingChecklist({ rows: [...base, sun], masters, from: '2026-10-01', to: '2026-10-30', cutoff: '2026-10-30', today: '2026-10-15', holidays: HOL });
+  // 근무일 10/1~10/14: 1·2·6·7·8·12·13·14 (3 토, 5 대체공휴일, 9 한글날 제외) → 14일만 빠짐
+  assert.equal(st(mid, 'gaps').state, 'todo');
+  assert.equal(st(mid, 'gaps').detail, 'X 1일(10-14)');
+  assert.equal(st(mid, 'holiday').state, 'todo');
+  assert.equal(st(mid, 'rate').state, 'todo');
+  assert.equal(st(mid, 'project').state, 'ok');
+  assert.equal(st(mid, 'cutoff').state, 'wait');
+  assert.equal(st(mid, 'confirm').state, 'ok');
+  const cut = L.applyProvisional(row({ date: '2026-10-30', model: 'X', driver: 'a', shift: '주', run_hours: 6 }), null, true, '2026-10-30');
+  const after = L.closingChecklist({ rows: [...base, cut], masters, from: '2026-10-01', to: '2026-10-30', cutoff: '2026-10-30', today: '2026-11-02', holidays: HOL, rate: 10000 });
+  assert.equal(st(after, 'cutoff').state, 'ok');
+  assert.equal(st(after, 'confirm').state, 'todo');
+  assert.equal(st(after, 'rate').state, 'ok');
+});
+test('예시 데이터: 지난달 마감일(08-31 월) 가입력 → 09-01 확정 1장, 가동 차이 +1.5h', () => {
+  const rep = L.provisionalReport(S, '2026-08-01', '2026-08-31');
+  assert.equal(rep.pending.length, 0);
+  assert.equal(rep.confirmed.length, 1);
+  assert.equal(rep.confirmed[0].date, '2026-08-31');
+  assert.equal(rep.confirmed[0].confirmed_at, '2026-09-01');
+  assert.equal(rep.confirmed[0].diffs.find(d => d.key === 'run_hours').diff, 1.5);
+});
+test('청구서 상세 시트: 과급 구분은 날짜 기준(토요일 「주」 → 휴일(토)), 가입력 표시', () => {
+  const rs = [row({ date: '2026-10-10', model: 'X', driver: 'a', shift: '주', run_hours: 5 }),
+    { ...L.applyProvisional(row({ date: '2026-10-30', model: 'X', driver: 'a', shift: '주', run_hours: 6 }), null, true, '2026-10-30') }];
+  const b = L.calcHourBilling(L.hourBillingLines(rs, {}, '2026-10-01', '2026-10-30', { holidays: HOL }), {});
+  const sh = L.hourBillingSheets(b, { from: '2026-10-01', to: '2026-10-30', holidays: HOL, status: { days: 2, drivers: 1, hours: 11, done: [] } }, rs, {});
+  const d = sh['X'].aoa;
+  assert.deepEqual(d.find(r => r[0] === '2026-10-10').slice(1, 3), ['주', '휴일(토)']);
+  assert.equal(d.find(r => r[0] === '2026-10-30')[10], '가입력(예상치)');
+});
+test('외부 AI 에 올리는 TPR 은 하루 2장까지(여러 장은 대외비)', () => {
+  let log = {};
+  assert.deepEqual(L.aiPageAllowance(log, '2026-09-29'), { used: 0, left: 2, ok: true, limit: 2 });
+  log = L.recordAiPage(log, '2026-09-29');
+  log = L.recordAiPage(log, '2026-09-29');
+  assert.equal(L.aiPageAllowance(log, '2026-09-29').ok, false);
+  assert.equal(L.aiPageAllowance(log, '2026-09-29').left, 0);
+  assert.equal(L.aiPageAllowance(log, '2026-09-30').ok, true);
+  assert.deepEqual(L.recordAiPage(log, '2026-09-30'), { '2026-09-30': 1 });
+});
+
 console.log('\n' + passed + '개 통과' + (process.exitCode ? ' · 실패 있음' : ''));

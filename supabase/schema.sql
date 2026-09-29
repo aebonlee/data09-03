@@ -85,6 +85,17 @@ alter table public.journal_rows add  constraint journal_rows_unreadable_check
                              'battery_check_h','inspect_h','special_h','heater_h','ac_h',
                              'battery_pct','charge_kwh','fuel_qty','urea_l']::text[]);
 
+-- 2026-09-29 오후 늦게 수강생 답: 마감일(근무일 기준 월 말일)에는 기성 값만 가입력하고 가동 후 확정한다.
+--   provisional = 아직 가입력(예상치) · estimate = 가입력 때 낸 값(확정 뒤에도 차이 대조용으로 남김) · confirmed_at = 확정일
+alter table public.journal_rows add column if not exists provisional  boolean not null default false;
+alter table public.journal_rows add column if not exists estimate     jsonb;
+alter table public.journal_rows add column if not exists confirmed_at date;
+alter table public.journal_rows drop constraint if exists journal_rows_estimate_check;
+alter table public.journal_rows add  constraint journal_rows_estimate_check check (estimate is null or jsonb_typeof(estimate) = 'object');
+-- 가입력인데 예상치가 없으면 대조할 수 없다
+alter table public.journal_rows drop constraint if exists journal_rows_provisional_check;
+alter table public.journal_rows add  constraint journal_rows_provisional_check check (not provisional or estimate is not null);
+
 create index if not exists journal_rows_owner_date_idx on public.journal_rows (owner_id, date);
 create index if not exists journal_rows_unit_idx       on public.journal_rows (owner_id, model, unit_no, date);
 

@@ -263,7 +263,9 @@
   // ── 입력값 검사 ──────────────────────────────────────────────
   // 결과: [{ id, level: 'error'|'warn', field, code, msg }]
   function unitKey(row) { return (row.model || '') + '|' + (row.unit_no || ''); }
-  function validateRows(rows) {
+  // opts.holidays: 공휴일 목록 map — 휴일 근무 검사(토요일 주간만 계약상 휴일 근무)에 씁니다. 없으면 토·일만 봅니다.
+  function validateRows(rows, opts) {
+    var hol = (opts && opts.holidays) || {};
     var out = [];
     function add(row, level, field, code, msg) { out.push({ id: row.id, level: level, field: field, code: code, msg: msg }); }
     var seen = {};
@@ -293,6 +295,8 @@
         add(row, 'warn', 'fuel_type', 'unknown', '알 수 없는 연료 종류 「' + row.fuel_type + '」 — 연료비 집계에서 빠집니다');
       }
       if (row.shift && !SHIFT_ORDER[row.shift]) add(row, 'warn', 'shift', 'unknown_shift', '주/야/휴 칸의 「' + row.shift + '」 를 알아보지 못했습니다 — 기성 과급 계산에서 주간으로 봅니다');
+      holidayWorkIssues(row, hol).forEach(function (i) { add(row, 'warn', 'shift', i.code, i.msg); });
+      if (row.provisional) add(row, 'warn', 'run_hours', 'provisional', '마감 전 가입력(예상치)입니다 — 가동 후 확정 값으로 다시 저장해 주세요');
       if (Array.isArray(row.checks) && row.checks.some(function (c) { return c === '유'; }) && !row.issue) {
         add(row, 'warn', 'issue', 'check_without_issue', '일일 점검항목에 「유」가 있는데 문제점/조치내용이 비어 있습니다');
       }
@@ -612,7 +616,7 @@
   // 배터리 상태표기(시작 및 종료) 구간 — 양식의 기본 칸. 모델·시험마다 바꿔 적을 수 있습니다.
   var BATTERY_SEGMENTS = ['기본/요철 (2hr)', '기본/요철 (1hr 50분)', '지게차 충전(정심)', '기본/요철 (2hr)', '기본/요철 (1hr 50분)', '기본/요철 (50분)', '배터리 충전 점검'];
   // TPR 일지에만 있는 값(표준 열 밖) — 행을 고쳐도 지워지지 않게 이 목록으로 옮겨 담습니다
-  var EXTRA_KEYS = ['battery', 'problems', 'checks', 'coop', 'improve', 'wheel_nut', 'lpg_bottles', '_tpr'];
+  var EXTRA_KEYS = ['battery', 'problems', 'checks', 'coop', 'improve', 'wheel_nut', 'lpg_bottles', '_tpr', 'provisional', 'estimate', 'confirmed_at'];
 
   function normCheck(v) {
     var s = String(v == null ? '' : v).trim().toLowerCase();
@@ -678,6 +682,7 @@
     f.improve = row.improve || '';
     f.wheel_nut = !!row.wheel_nut;
     f.lpg_bottles = row.lpg_bottles == null ? '' : row.lpg_bottles;
+    f.provisional = !!row.provisional;
     return f;
   }
   // 배터리 소모 합계: 시작 > 종료 인 구간(방전)의 차이를 더합니다. 충전 구간(종료가 더 큼)은 뺍니다.
@@ -723,6 +728,19 @@
       '  "improve": "개선/건의사항"',
       '}'
     ].join('\n');
+  }
+  // 외부 AI 에 올리는 TPR 은 하루 1~2장까지(수강생 답 09-29 오후 늦게):
+  // 「한 두 장은 문제 안 되는데 여러 장은 개발모델의 자료라 대외비」. 기본은 외부 전송 없이 사진 옆에 띄워 옮겨 적기이고,
+  // AI 반자동은 사용자가 1~2장임을 확인하고 켤 때만 요청문을 복사할 수 있습니다. log = { 'YYYY-MM-DD': 장 수 }
+  var AI_PAGE_LIMIT = 2;
+  function aiPageAllowance(log, today) {
+    var used = (log && +log[today]) || 0;
+    return { used: used, left: Math.max(0, AI_PAGE_LIMIT - used), ok: used < AI_PAGE_LIMIT, limit: AI_PAGE_LIMIT };
+  }
+  function recordAiPage(log, today) {
+    var out = {};
+    out[today] = ((log && +log[today]) || 0) + 1; // 지난 날짜 기록은 남기지 않습니다(하루 단위 제한)
+    return out;
   }
   // AI 답(JSON)을 입력 화면 값으로. 코드 블록(```)이나 앞뒤 문장이 섞여 있어도 { … } 만 꺼냅니다.
   function tprFromAi(textIn) {
@@ -979,7 +997,9 @@
   // 특화시험 = 배터리 충전 점검 + 특화 시험(동력전달 특화 등)·장비수리 — 수강생 답(09-29 오후)으로 확정.
   // 과급: 야간 19%, 휴일 30% — 계약서에 명기된 고정값(수강생 답). 화면에서 바꾸지 않습니다.
   var DEFAULT_SURCHARGE = { '주': 0, '야': 19, '휴': 30 };
-  function hourBillingLines(rows, masters, from, to) {
+  // opts.holidays: 공휴일 목록(parseHolidays 의 map). 과급 구분은 적힌 주/야/휴가 아니라 날짜로 정합니다(billShift).
+  function hourBillingLines(rows, masters, from, to, opts) {
+    var hol = (opts && opts.holidays) || {};
     var units = unitList(rows, masters);
     var out = [];
     units.forEach(function (u) {
@@ -990,8 +1010,7 @@
       SHIFTS.forEach(function (sh) {
         var l = { key: u.key, label: u.label, project: u.project, shift: sh.key, cum: cum, month: 0, tpr: 0, special: 0 };
         inPeriod.forEach(function (r) {
-          var s = SHIFT_ORDER[r.shift] ? r.shift : '주';
-          if (s !== sh.key) return;
+          if (billShift(r, hol) !== sh.key) return;
           var h = effectiveHours(r);
           if (h > 0) l.month = r2(l.month + h);
           l.tpr = r2(l.tpr + (r.inspect_h || 0));
@@ -1102,13 +1121,15 @@
     var used = { '청구서': true };
     groups.forEach(function (g) {
       var detail = [[g.label + ' 내구시험 기성 상세 (' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to) + ')'], [],
-        ['Date', '주/야/휴', '일 가동시간(h)', 'TPR 작성 및 점검(h)', '배터리 충전 점검(h)', '특회 장비수리(h)', '누적 가동시간(h)', '운전자 Code', '문제점 / 조치내용']];
+        ['Date', '주/야/휴', '과급 구분(날짜 기준)', '일 가동시간(h)', 'TPR 작성 및 점검(h)', '배터리 충전 점검(h)', '특회 장비수리(h)', '누적 가동시간(h)', '운전자 Code', '문제점 / 조치내용', '비고']];
       var m = (masters || {})[g.key] || { model: g.key.split('|')[0], unit_no: g.key.split('|')[1] };
       unitSummary(rows, m, { to: meta.to }).lines.forEach(function (l) {
         if (l.date < meta.from) return;
         var r = rows.find(function (x) { return x.id === l.id; }) || {};
-        detail.push([l.date, l.shift, l.hours == null ? '' : l.hours, l.inspect == null ? '' : l.inspect, r.battery_check_h == null ? '' : r.battery_check_h,
-          r.special_h == null ? '' : r.special_h, l.cum, l.driver, l.issue]);
+        var dk = dayKind(l.date, meta.holidays);
+        detail.push([l.date, l.shift, shiftLabel(billShift({ date: l.date, shift: l.shift }, meta.holidays)) + (dk.kind === '평일' ? '' : '(' + (dk.name || dk.kind) + ')'),
+          l.hours == null ? '' : l.hours, l.inspect == null ? '' : l.inspect, r.battery_check_h == null ? '' : r.battery_check_h,
+          r.special_h == null ? '' : r.special_h, l.cum, l.driver, l.issue, r.provisional ? '가입력(예상치)' : r.estimate ? '가입력 후 확정' : '']);
       });
       sheets[sheetName(g.label, used)] = { aoa: detail };
     });
@@ -1214,6 +1235,237 @@
     return sheets;
   }
 
+  // ── 휴일·기성 마감 (수강생 답 09-29 오후 늦게) ─────────────────
+  // 「휴일은 별도로 입력을 안 하고 날짜로 휴일을 구분」 「휴일 근무는 토요일 주간만 운행(계약상), 30% 동일」
+  // 「근무일 기준 월 말일이 기성 마감일」 — 그래서 휴일·마감일 모두 날짜와 공휴일 목록으로 계산합니다.
+  //
+  // 공휴일 목록은 사용자가 고치는 글자(한 줄에 「YYYY-MM-DD 이름」)입니다. 코드에 정답 달력을 박아 두지 않습니다.
+  // 양력 고정 공휴일은 해마다 같아 만들어 넣고, 음력 명절·대체공휴일·선거일은 해마다 달라
+  // 2026년분만 초안으로 넣어 둡니다(화면에서 회사 달력과 대조해 고치고, 다음 해 것은 직접 더함).
+  var FIXED_HOLIDAYS = [['01-01', '신정'], ['03-01', '삼일절'], ['05-05', '어린이날'], ['06-06', '현충일'],
+    ['08-15', '광복절'], ['10-03', '개천절'], ['10-09', '한글날'], ['12-25', '성탄절']];
+  var LUNAR_2026 = [['2026-02-16', '설날 연휴'], ['2026-02-17', '설날'], ['2026-02-18', '설날 연휴'], ['2026-03-02', '대체공휴일(삼일절)'],
+    ['2026-05-24', '부처님오신날'], ['2026-05-25', '대체공휴일(부처님오신날)'], ['2026-06-03', '전국동시지방선거'],
+    ['2026-08-17', '대체공휴일(광복절)'], ['2026-09-24', '추석 연휴'], ['2026-09-25', '추석'], ['2026-09-26', '추석 연휴'],
+    ['2026-10-05', '대체공휴일(개천절)']];
+  function defaultHolidayText(years) {
+    var lines = [];
+    (years || []).forEach(function (y) {
+      FIXED_HOLIDAYS.forEach(function (h) { lines.push(y + '-' + h[0] + ' ' + h[1]); });
+      if (+y === 2026) LUNAR_2026.forEach(function (h) { lines.push(h[0] + ' ' + h[1]); });
+    });
+    return lines.sort().join('\n');
+  }
+  // 「2026-09-24 추석 연휴」 「2026.9.24, 추석」 등 → { map: { 'YYYY-MM-DD': 이름 }, bad: [못 읽은 줄] }
+  function parseHolidays(textIn) {
+    var map = {}, bad = [];
+    String(textIn == null ? '' : textIn).split(/\r?\n/).forEach(function (line) {
+      var s = line.replace(/#.*$/, '').trim();
+      if (!s) return;
+      var m = s.match(/^(\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2})\.?\s*[,\t ]?\s*(.*)$/);
+      var d = m ? parseDate(m[1].replace(/\s/g, '')) : null;
+      if (!d) { bad.push(line); return; }
+      map[d] = (m[2] || '').trim() || '공휴일';
+    });
+    return { map: map, bad: bad };
+  }
+  function dowOf(date) { var p = String(date).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]).getDay(); }
+  // 날짜의 종류: 평일 · 토 · 일 · 공휴일(토·일과 겹치면 공휴일)
+  function dayKind(date, hol) {
+    hol = hol || {};
+    if (!date) return { kind: '', name: '' };
+    if (hol[date]) return { kind: '공휴일', name: hol[date] };
+    var w = dowOf(date);
+    return { kind: w === 6 ? '토' : w === 0 ? '일' : '평일', name: '' };
+  }
+  function isWorkday(date, hol) { return dayKind(date, hol).kind === '평일'; }
+  // 기성 과급 구분: 평일은 적힌 주/야(휴라고 적혀도 주간), 토·일·공휴일은 휴일(30%)
+  function billShift(row, hol) {
+    var k = dayKind(row.date, hol).kind;
+    if (k && k !== '평일') return '휴';
+    return row.shift === '야' ? '야' : '주';
+  }
+  // 휴일 근무 검사 — 계약상 휴일 근무는 토요일 주간뿐입니다. 경고만 하고 계산은 휴일 30% 로 합니다.
+  function holidayWorkIssues(row, hol) {
+    var out = [];
+    if (!row.date) return out;
+    var dk = dayKind(row.date, hol);
+    if (dk.kind === '일' || dk.kind === '공휴일') {
+      out.push({ code: 'holiday_not_saturday', msg: (dk.kind === '일' ? '일요일' : '공휴일(' + dk.name + ')') + ' 일지입니다 — 계약상 휴일 근무는 토요일 주간뿐입니다. 기성은 휴일 과급 30% 로 계산했으니 날짜를 확인해 주세요' });
+    }
+    if (dk.kind !== '평일' && row.shift === '야') {
+      out.push({ code: 'holiday_night', msg: '휴일 야간 일지입니다 — 계약상 휴일 근무는 토요일 주간뿐입니다. 기성은 휴일 과급 30% 로 계산했습니다' });
+    }
+    if (dk.kind === '평일' && row.shift === '휴') {
+      out.push({ code: 'holiday_on_workday', msg: '평일인데 「휴」로 적혀 있습니다 — 휴일은 날짜로 정하므로 주간(과급 없음)으로 계산합니다. 회사 휴무일이면 공휴일 목록에 더해 주세요' });
+    }
+    return out;
+  }
+  // 그 달의 마지막 근무일(= 기성 마감일). month 는 1~12.
+  function lastWorkday(year, month, hol) {
+    var d = new Date(+year, +month, 0);
+    for (var i = 0; i < 31; i++) {
+      var ds = toDateStr(d);
+      if (isWorkday(ds, hol)) return ds;
+      d.setDate(d.getDate() - 1);
+    }
+    return null;
+  }
+  function cutoffOfMonth(ym, hol) { var p = String(ym).split('-'); return lastWorkday(+p[0], +p[1], hol); }
+  function shiftMonth(ym, n) { var p = String(ym).split('-'); var d = new Date(+p[0], +p[1] - 1 + n, 1); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+  // 기성 기간: 전달 마감일 다음 날 ~ 그달 마감일. 마감일 뒤 토요일 근무 등은 다음 기간으로 넘어갑니다.
+  function closingPeriodOf(ym, hol) {
+    return { month: ym, from: addDays(cutoffOfMonth(shiftMonth(ym, -1), hol), 1), to: cutoffOfMonth(ym, hol), cutoff: cutoffOfMonth(ym, hol) };
+  }
+  // 오늘이 속한(아직 마감 전인) 기성 기간. 오늘이 그달 마감일을 지났으면 다음 달 기간입니다.
+  function openClosingPeriod(today, hol) {
+    var ym = monthOf(today);
+    if (today > cutoffOfMonth(ym, hol)) ym = shiftMonth(ym, 1);
+    return closingPeriodOf(ym, hol);
+  }
+  function workdaysBetween(from, to, hol) {
+    var out = [];
+    if (!from || !to || from > to) return out;
+    for (var d = from, i = 0; d <= to && i < 400; d = addDays(d, 1), i++) if (isWorkday(d, hol)) out.push(d);
+    return out;
+  }
+
+  // 마감일 가입력(예상치) → 가동 후 확정.
+  // 「마지막 날은 근무 끝나기 전에 가동시간, 연료사용량 등 기성에 필요한 값만 미리 입력하여 마감하고, 가동 후 추가 데이터 업데이트」
+  // 가입력으로 저장하면 그 값을 estimate 에 남기고, 확정 저장하면 estimate 는 그대로 둔 채 provisional 을 끕니다.
+  // 그래서 「마감 때 낸 값」과 「확정 값」의 차이를 나중에도 보여 줄 수 있습니다.
+  var PROVISIONAL_KEYS = ['run_hours', 'hour_end', 'inspect_h', 'battery_check_h', 'special_h', 'fuel_qty', 'lpg_bottles', 'urea_l'];
+  var PROVISIONAL_LABELS = { lpg_bottles: 'LPG 통 수' };
+  function provLabel(k) { return PROVISIONAL_LABELS[k] || FIELD[k].label; }
+  function snapshotEstimate(row) {
+    var e = {};
+    PROVISIONAL_KEYS.forEach(function (k) { e[k] = row[k] == null ? null : row[k]; });
+    return e;
+  }
+  // newRow: 방금 저장하려는 행, oldRow: 고치기 전 행(새 일지면 null), wantProvisional: 「가입력」 표시 여부, today: 확정일
+  function applyProvisional(newRow, oldRow, wantProvisional, today) {
+    var r = Object.assign({}, newRow);
+    delete r.provisional; delete r.estimate; delete r.confirmed_at;
+    if (wantProvisional) { r.provisional = true; r.estimate = snapshotEstimate(r); return r; }
+    if (oldRow && oldRow.estimate) {
+      r.estimate = oldRow.estimate;
+      r.confirmed_at = oldRow.provisional ? (today || '') : (oldRow.confirmed_at || today || '');
+    }
+    return r;
+  }
+  // 기간 안의 가입력 일지: 아직 확정 전(pending)과 확정된 것의 값 차이(confirmed)
+  function provisionalReport(rows, from, to) {
+    var pending = [], confirmed = [];
+    sortLogs(rows.filter(function (r) { return r.date && r.date >= from && r.date <= to && (r.provisional || r.estimate); })).forEach(function (r) {
+      var diffs = PROVISIONAL_KEYS.map(function (k) {
+        var est = r.estimate ? r.estimate[k] : null, fin = r[k] == null ? null : r[k];
+        if (est == null && fin == null) return null;
+        return { key: k, label: provLabel(k), est: est, fin: fin, diff: r2((fin || 0) - (est || 0)) };
+      }).filter(Boolean);
+      var item = { id: r.id, date: r.date, shift: r.shift || '', label: modelLabel(r.model, r.unit_no), diffs: diffs, confirmed_at: r.confirmed_at || '' };
+      if (r.provisional) pending.push(item); else confirmed.push(item);
+    });
+    return { pending: pending, confirmed: confirmed, changed: confirmed.filter(function (c) { return c.diffs.some(function (d) { return d.diff !== 0; }); }).length };
+  }
+  // 마감 때 낸 값(estimate)으로 되돌린 행 — 「마감 제출분」 청구서를 다시 계산할 때 씁니다
+  function asSubmitted(rows) {
+    return rows.map(function (r) { return r.estimate ? Object.assign({}, r, r.estimate) : r; });
+  }
+  // 마감 제출분 vs 확정 값 — 운전시간 기성금액·연료 사용량 차이
+  function closingDiff(rows, masters, from, to, opts) {
+    opts = opts || {};
+    var hol = opts.holidays || {};
+    var sub = asSubmitted(rows);
+    var hs = calcHourBilling(hourBillingLines(sub, masters, from, to, { holidays: hol }), { rate: opts.rate });
+    var hf = calcHourBilling(hourBillingLines(rows, masters, from, to, { holidays: hol }), { rate: opts.rate });
+    var fs = calcFuelBilling(fuelBillingLines(sub, masters, from, to), opts.prices, opts);
+    var ff = calcFuelBilling(fuelBillingLines(rows, masters, from, to), opts.prices, opts);
+    var qty = {};
+    BILL_ITEMS.forEach(function (k) {
+      var a = fs.totals.qty[k] || 0, b = ff.totals.qty[k] || 0;
+      if (a || b) qty[k] = { est: a, fin: b, diff: r2(b - a) };
+    });
+    return {
+      hours: { est: hs.totals.month, fin: hf.totals.month, diff: r2(hf.totals.month - hs.totals.month) },
+      subtotal: { est: hs.totals.subtotal, fin: hf.totals.subtotal, diff: r4(hf.totals.subtotal - hs.totals.subtotal) },
+      amount: hs.missingRate ? null : { est: hs.totals.amount, fin: hf.totals.amount, diff: hf.totals.amount - hs.totals.amount },
+      fuel: qty,
+      fuelAmount: fs.missingPrice.length || ff.missingPrice.length ? null : { est: fs.totals.amount, fin: ff.totals.amount, diff: ff.totals.amount - fs.totals.amount }
+    };
+  }
+  // 청구서 엑셀에 붙이는 「가입력·확정 대조」 시트
+  function provisionalSheet(rep, diff) {
+    var aoa = [['마감일 가입력(예상치)과 가동 후 확정 값 대조'], [],
+      ['일자', '주/야/휴', '모델/호기', '상태', '항목', '가입력(예상치)', '확정', '차이']];
+    function push(item, state) {
+      if (!item.diffs.length) aoa.push([item.date, item.shift, item.label, state, '', '', '', '']);
+      item.diffs.forEach(function (d, i) {
+        aoa.push([i === 0 ? item.date : '', i === 0 ? item.shift : '', i === 0 ? item.label : '', i === 0 ? state : '', d.label,
+          d.est == null ? '' : d.est, state === '확정 전' ? '' : (d.fin == null ? '' : d.fin), state === '확정 전' ? '' : d.diff]);
+      });
+    }
+    rep.pending.forEach(function (i) { push(i, '확정 전'); });
+    rep.confirmed.forEach(function (i) { push(i, '확정(' + (i.confirmed_at || '-') + ')'); });
+    if (diff) {
+      aoa.push([], ['청구서 영향', '', '', '', '항목', '마감 제출분', '확정 값', '차이']);
+      aoa.push(['', '', '', '', '장비 실가동 금월(h)', diff.hours.est, diff.hours.fin, diff.hours.diff]);
+      aoa.push(['', '', '', '', '소계(h)', diff.subtotal.est, diff.subtotal.fin, diff.subtotal.diff]);
+      if (diff.amount) aoa.push(['', '', '', '', '기성금액(원)', diff.amount.est, diff.amount.fin, diff.amount.diff]);
+      Object.keys(diff.fuel).forEach(function (k) { aoa.push(['', '', '', '', k + ' 사용량(' + fuelUnit(k) + ')', diff.fuel[k].est, diff.fuel[k].fin, diff.fuel[k].diff]); });
+      if (diff.fuelAmount) aoa.push(['', '', '', '', '주유 금액(원)', diff.fuelAmount.est, diff.fuelAmount.fin, diff.fuelAmount.diff]);
+    }
+    return { aoa: aoa };
+  }
+
+  // 마감 준비 체크리스트 — 마지막 날 하루에 몰리지 않게, 기간 중 매일 보면서 미리 채웁니다.
+  // input: { rows, masters, from, to, cutoff, today, holidays, rate, prices, bottleKg }
+  // 결과: [{ key, label, state: 'ok' | 'todo' | 'wait', detail }]
+  function closingChecklist(input) {
+    var hol = input.holidays || {};
+    var rows = input.rows || [], from = input.from, to = input.to, today = input.today, cutoff = input.cutoff || to;
+    var inP = rows.filter(function (r) { return r.date && r.model && r.date >= from && r.date <= to; });
+    var out = [];
+    function item(key, label, state, detail) { out.push({ key: key, label: label, state: state, detail: detail || '' }); }
+    // 1. 근무일 일지 빠짐 — 기간 시작 ~ 어제(오늘 일지는 아직 쓰는 중일 수 있음), 기간 안에 일지가 있는 모델별
+    var until = today && today <= to ? addDays(today, -1) : to;
+    var days = workdaysBetween(from, until, hol);
+    var byUnit = {};
+    inP.forEach(function (r) { var k = masterKey(r.model, r.unit_no); (byUnit[k] = byUnit[k] || { label: modelLabel(r.model, r.unit_no), dates: {}, first: r.date }).dates[r.date] = true; if (r.date < byUnit[k].first) byUnit[k].first = r.date; });
+    var gaps = [];
+    Object.keys(byUnit).forEach(function (k) {
+      var u = byUnit[k];
+      var miss = days.filter(function (d) { return d >= u.first && !u.dates[d]; });
+      if (miss.length) gaps.push(u.label + ' ' + miss.length + '일(' + miss.slice(0, 4).map(function (d) { return d.slice(5); }).join(', ') + (miss.length > 4 ? ' …' : '') + ')');
+    });
+    item('gaps', '근무일 일지 빠짐 없음(' + dotDate(from).slice(5) + ' ~ ' + (until >= from ? dotDate(until).slice(5) : '-') + ')', gaps.length ? 'todo' : 'ok', gaps.join(' · '));
+    // 2. 입력값 검사 오류
+    var ids = {}; inP.forEach(function (r) { ids[r.id] = true; });
+    var iss = validateRows(rows, { holidays: hol }).filter(function (i) { return ids[i.id]; });
+    var errs = iss.filter(function (i) { return i.level === 'error'; }).length;
+    item('errors', '입력값 검사 오류 없음', errs ? 'todo' : 'ok', errs ? errs + '건' : '');
+    // 3. 휴일 근무 확인
+    var holWarn = iss.filter(function (i) { return /^holiday_/.test(i.code); }).length;
+    item('holiday', '휴일 근무는 토요일 주간만', holWarn ? 'todo' : 'ok', holWarn ? holWarn + '건 확인' : '');
+    // 4. 단가
+    item('rate', '운전시간 단가 입력', parseNum(input.rate) > 0 ? 'ok' : 'todo', '');
+    var fb = calcFuelBilling(fuelBillingLines(rows, input.masters, from, to), input.prices, { bottleKg: input.bottleKg });
+    item('prices', '연료·요소수 단가 입력', fb.missingPrice.length ? 'todo' : 'ok', fb.missingPrice.join(', '));
+    // 5. 과제번호
+    var noProj = unitList(rows, input.masters).filter(function (u) { return byUnit[u.key] && !u.project; }).map(function (u) { return u.label; });
+    item('project', '모델 정보에 과제번호', noProj.length ? 'todo' : 'ok', noProj.join(', '));
+    // 6. 마감일 가입력
+    var cutRows = inP.filter(function (r) { return r.date === cutoff; });
+    var cutUnits = {}; cutRows.forEach(function (r) { cutUnits[masterKey(r.model, r.unit_no)] = true; });
+    var notCut = Object.keys(byUnit).filter(function (k) { return !cutUnits[k]; }).map(function (k) { return byUnit[k].label; });
+    item('cutoff', '마감일(' + dotDate(cutoff).slice(5) + ' ' + weekdayKo(cutoff) + ') 기성 값 가입력',
+      today < cutoff ? 'wait' : notCut.length ? 'todo' : 'ok', today < cutoff ? '마감일 근무 끝나기 전에 가동시간·연료만 먼저 적습니다' : notCut.join(', '));
+    // 7. 가입력 확정
+    var pend = inP.filter(function (r) { return r.provisional; });
+    item('confirm', '가입력 일지를 가동 후 확정', pend.length ? (today <= cutoff ? 'wait' : 'todo') : 'ok',
+      pend.length ? pend.length + '장 확정 전' : '');
+    return out;
+  }
+
   var api = {
     STD_FIELDS: STD_FIELDS, FIELD: FIELD, FUELS: FUELS, ELECTRIC: ELECTRIC, LIMITS: LIMITS,
     emptyDb: emptyDb, toDateStr: toDateStr, parseDate: parseDate, parseNum: parseNum, parseHours: parseHours,
@@ -1234,7 +1486,13 @@
     unitSummary: unitSummary, summarySheet: summarySheet,
     weeklyReport: weeklyReport, weeklyMail: weeklyMail, progressSvg: progressSvg,
     hourBillingLines: hourBillingLines, calcHourBilling: calcHourBilling, hourBillingStatus: hourBillingStatus, hourBillingSheets: hourBillingSheets,
-    fuelBillingLines: fuelBillingLines, calcFuelBilling: calcFuelBilling, fuelBillingSheets: fuelBillingSheets
+    fuelBillingLines: fuelBillingLines, calcFuelBilling: calcFuelBilling, fuelBillingSheets: fuelBillingSheets,
+    // 2026-09-29 오후 늦게 — 휴일·기성 마감·가입력/확정
+    defaultHolidayText: defaultHolidayText, parseHolidays: parseHolidays, dayKind: dayKind, isWorkday: isWorkday, billShift: billShift,
+    holidayWorkIssues: holidayWorkIssues, lastWorkday: lastWorkday, closingPeriodOf: closingPeriodOf, openClosingPeriod: openClosingPeriod,
+    shiftMonth: shiftMonth, workdaysBetween: workdaysBetween, PROVISIONAL_KEYS: PROVISIONAL_KEYS, applyProvisional: applyProvisional,
+    provisionalReport: provisionalReport, asSubmitted: asSubmitted, closingDiff: closingDiff, provisionalSheet: provisionalSheet,
+    closingChecklist: closingChecklist, AI_PAGE_LIMIT: AI_PAGE_LIMIT, aiPageAllowance: aiPageAllowance, recordAiPage: recordAiPage
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DLLogic = api;

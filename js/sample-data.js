@@ -105,6 +105,17 @@
     rows.sort(function (a, b) {
       return a.date < b.date ? -1 : a.date > b.date ? 1 : a.model < b.model ? -1 : a.model > b.model ? 1 : (a.shift === '야' ? 1 : -1);
     });
+    // ④ 지난달 마감일(마지막 평일) 가입력 → 가동 후 확정 예시: 마감 때는 가동 1.5h 적게, 경유는 비워 두고 냈다가 가동 후 확정
+    var cut = new Date(now.getFullYear(), now.getMonth(), 0);
+    while (cut.getDay() === 0 || cut.getDay() === 6) cut.setDate(cut.getDate() - 1);
+    var next = new Date(cut); next.setDate(next.getDate() + 1);
+    while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1);
+    var cr = rows.find(function (r) { return r.date === ds(cut) && r.model === MODELS[0].model && r.shift === '주'; });
+    if (cr) {
+      cr.estimate = { run_hours: cr.run_hours - 1.5, hour_end: r1(cr.hour_end - 1.5), inspect_h: cr.inspect_h, battery_check_h: cr.battery_check_h,
+        special_h: cr.special_h, fuel_qty: null, lpg_bottles: null, urea_l: cr.urea_l };
+      cr.confirmed_at = ds(next);
+    }
     return rows;
   }
 

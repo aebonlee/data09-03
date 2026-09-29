@@ -126,6 +126,21 @@ begin
   values ('2025-04-30', '2025-05-30', 'LPG', 2505, 'kg', '예시');
 
   insert into public.period_fuel_prices (period_from, period_to, fuel, price, unit) values ('2025-04-30', '2025-05-30', '요소수', 1200, 'L');
+  -- 마감일 가입력 → 확정 (09-29 오후 늦게)
+  insert into public.journal_rows (id, date, model, run_hours, provisional, estimate)
+  values ('r90', '2026-09-30', 'MODEL-Z', 6, true, '{"run_hours": 6, "fuel_qty": null}');
+  update public.journal_rows set run_hours = 8.5, provisional = false, confirmed_at = '2026-10-01' where id = 'r90';
+  perform public._assert((select (estimate->>'run_hours')::numeric = 6 and run_hours = 8.5 and not provisional from public.journal_rows where id = 'r90'),
+    '확정 뒤에도 가입력 예상치가 남아 차이를 대조할 수 있다');
+  v_raised := false;
+  begin insert into public.journal_rows (id, model, provisional) values ('r91', 'X', true);
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '가입력인데 예상치가 없으면 막는다 (CHECK)');
+  v_raised := false;
+  begin insert into public.journal_rows (id, model, estimate) values ('r92', 'X', '[1]');
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '예상치는 객체여야 한다 (CHECK)');
+
   insert into public.unit_masters (model, unit_no, extended) values ('MODEL-Z', '', true);
   perform public._assert((select extended and target_hours is null from public.unit_masters where model = 'MODEL-Z'),
     '특화 모델은 목표를 비워 두고 extended 로 표시할 수 있다');
