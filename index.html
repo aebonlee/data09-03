@@ -43,6 +43,10 @@
         <pattern id="hgGrid" width="40" height="40" patternUnits="userSpaceOnUse">
           <path d="M40 0H0V40" fill="none" stroke="#1a3a66" stroke-width="1"/>
         </pattern>
+        <linearGradient id="hgBeam" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#fff3c4" stop-opacity=".85"/>
+          <stop offset="1" stop-color="#fff3c4" stop-opacity="0"/>
+        </linearGradient>
         <pattern id="hgWin" width="22" height="24" patternUnits="userSpaceOnUse">
           <rect x="6" y="6" width="9" height="11" fill="#22497c"/>
         </pattern>
@@ -65,7 +69,7 @@
       <g opacity=".92">
         <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#3d6aa6" stroke-width="38" stroke-linejoin="round"/>
         <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#173a68" stroke-width="31" stroke-linejoin="round"/>
-        <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#9ab8e0" stroke-width="2.5" stroke-dasharray="12 12"/>
+        <path id="fxCourse" d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#9ab8e0" stroke-width="2.5" stroke-dasharray="12 12"/>
         <rect x="684" y="156" width="32" height="8" fill="#ffffff"/>
         <rect x="692" y="156" width="8" height="4" fill="#0b1f3a"/>
         <rect x="708" y="156" width="8" height="4" fill="#0b1f3a"/>
@@ -76,6 +80,9 @@
           <circle cx="890" cy="56" r="6"/><circle cx="1140" cy="160" r="6"/><circle cx="1400" cy="40" r="6"/>
           <circle cx="1546" cy="226" r="6"/><circle cx="890" cy="286" r="6"/>
         </g>
+        <!-- 옆모습 지게차와 같은 걸음으로 코스를 도는 표시(예시 연출) -->
+        <path id="fxTrail" d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#f2b43c" stroke-width="7" stroke-linecap="round" opacity="0"/>
+        <g id="fxMarker" transform="translate(700 160)"><circle r="15" fill="#f2b43c" opacity=".28"/><circle r="8" fill="#f2b43c" stroke="#081629" stroke-width="2.5"/></g>
       </g>
 
       <!-- 옆에서 본 시험 구간: 평지 → 요철(범프) 3개 → 경사로 오르막·평탄·내리막 -->
@@ -98,34 +105,66 @@
         <polygon points="1566,500 1590,500 1582,466 1574,466" fill="#f07a2a"/><polygon points="1570,484 1586,484 1584,476 1572,476" fill="#ffffff"/><rect x="1562" y="497" width="32" height="5" fill="#0a1428"/>
       </g>
 
-      <!-- 지게차(짐을 실은 채 요철 구간으로 들어가는 모습) -->
-      <g transform="translate(900 0)">
-        <g stroke="#7fa3d6" stroke-width="4" stroke-linecap="round" opacity=".8">
+      <!-- 구간 누르기 자리(마우스·터치용 — 키보드는 글 옆 구간 버튼) + 고른 구간 표시 -->
+      <rect id="fxSecHi" x="1180" y="418" width="156" height="92" rx="6" fill="#f2b43c" opacity="0"/>
+      <g id="fxHots" fill="transparent" pointer-events="all">
+        <rect class="fx-hot" data-sec="flat" x="0" y="418" width="1180" height="182"/>
+        <rect class="fx-hot" data-sec="bump" x="1180" y="418" width="156" height="182"/>
+        <rect class="fx-hot" data-sec="slope" x="1336" y="418" width="216" height="182"/>
+        <rect class="fx-hot" data-sec="cone" x="1552" y="418" width="48" height="182"/>
+      </g>
+      <!-- 먼지·배기 연기(js/hero-fx.js 가 채움) -->
+      <g id="fxPuffs"></g>
+
+      <!-- 지게차(짐을 실은 채 요철 구간으로 들어가는 모습). 움직임은 js/hero-fx.js — 이 자세가 움직임 없는 기본 모습 -->
+      <g id="fxTruck" transform="translate(900 0)">
+        <g id="fxSpeed" stroke="#7fa3d6" stroke-width="4" stroke-linecap="round" opacity=".8">
           <line x1="-70" y1="420" x2="-22" y2="420"/><line x1="-92" y1="442" x2="-32" y2="442"/><line x1="-62" y1="464" x2="-16" y2="464"/>
         </g>
-        <rect x="186" y="272" width="14" height="202" fill="#2c4468"/>
-        <rect x="200" y="284" width="8" height="190" fill="#3b5780"/>
-        <rect x="176" y="300" width="8" height="140" fill="#9fb3cf"/>
-        <path d="M44,398 L54,300 M136,398 L128,300" stroke="#1b2c47" stroke-width="8" stroke-linecap="round"/>
-        <rect x="40" y="292" width="100" height="10" rx="3" fill="#1b2c47"/>
-        <circle cx="132" cy="318" r="5" fill="#fff3c4"/>
-        <rect x="62" y="350" width="14" height="48" rx="4" fill="#1b2c47"/>
-        <path d="M84,398 L88,358 Q98,350 108,358 L114,398 Z" fill="#3d6aa6"/>
-        <circle cx="98" cy="338" r="12" fill="#e9eef6"/>
-        <line x1="108" y1="368" x2="130" y2="382" stroke="#3d6aa6" stroke-width="7" stroke-linecap="round"/>
-        <line x1="124" y1="394" x2="138" y2="372" stroke="#1b2c47" stroke-width="5" stroke-linecap="round"/>
-        <path d="M6,470 L6,420 Q6,398 30,398 L126,398 L150,428 L184,428 L184,470 Z" fill="#f2b43c"/>
-        <path d="M6,470 L6,420 Q6,398 30,398 L40,398 L40,470 Z" fill="#d99a22"/>
-        <rect x="44" y="446" width="136" height="5" fill="#0b1f3a" opacity=".7"/>
-        <circle cx="42" cy="472" r="28" fill="#0a1428"/><circle cx="42" cy="472" r="11" fill="#9fb3cf"/><circle cx="42" cy="472" r="4" fill="#0a1428"/>
-        <circle cx="148" cy="468" r="32" fill="#0a1428"/><circle cx="148" cy="468" r="12" fill="#9fb3cf"/><circle cx="148" cy="468" r="4" fill="#0a1428"/>
-        <rect x="208" y="404" width="10" height="70" fill="#1b2c47"/>
-        <rect x="208" y="468" width="78" height="6" fill="#1b2c47"/>
-        <rect x="214" y="454" width="70" height="14" fill="#a67c4a"/>
-        <rect x="214" y="454" width="70" height="4" fill="#c89a60"/>
-        <rect x="220" y="402" width="60" height="52" rx="3" fill="#dbe5f2"/>
-        <rect x="247" y="402" width="6" height="52" fill="#b7c6db"/>
-        <rect x="228" y="414" width="16" height="10" fill="#9fb3cf"/>
+        <g id="fxChassis">
+          <g class="fx-body"><g id="fxMastBack">
+            <rect x="186" y="272" width="14" height="202" fill="#2c4468"/>
+            <rect x="200" y="284" width="8" height="190" fill="#3b5780"/>
+            <rect x="176" y="300" width="8" height="140" fill="#9fb3cf"/>
+          </g></g>
+          <g class="fx-body">
+            <polygon id="fxBeam" points="134,313 372,292 372,380" fill="url(#hgBeam)" opacity="0"/>
+            <path d="M44,398 L54,300 M136,398 L128,300" stroke="#1b2c47" stroke-width="8" stroke-linecap="round"/>
+            <rect x="40" y="292" width="100" height="10" rx="3" fill="#1b2c47"/>
+            <circle id="fxBeaconGlow" cx="62" cy="284" r="15" fill="#ff9a3c" opacity="0"/>
+            <rect x="56" y="280" width="12" height="12" rx="4" fill="#c2622a"/>
+            <circle cx="132" cy="318" r="5" fill="#fff3c4"/>
+            <rect x="16" y="380" width="7" height="20" rx="2" fill="#1b2c47"/>
+            <rect x="62" y="350" width="14" height="48" rx="4" fill="#1b2c47"/>
+            <path d="M84,398 L88,358 Q98,350 108,358 L114,398 Z" fill="#3d6aa6"/>
+            <circle cx="98" cy="338" r="12" fill="#e9eef6"/>
+            <line x1="108" y1="368" x2="130" y2="382" stroke="#3d6aa6" stroke-width="7" stroke-linecap="round"/>
+            <line x1="124" y1="394" x2="138" y2="372" stroke="#1b2c47" stroke-width="5" stroke-linecap="round"/>
+            <path d="M6,470 L6,420 Q6,398 30,398 L126,398 L150,428 L184,428 L184,470 Z" fill="#f2b43c"/>
+            <path d="M6,470 L6,420 Q6,398 30,398 L40,398 L40,470 Z" fill="#d99a22"/>
+            <rect x="44" y="446" width="136" height="5" fill="#0b1f3a" opacity=".7"/>
+          </g>
+          <g id="fxWheelR">
+            <circle cx="42" cy="472" r="28" fill="#0a1428"/>
+            <g stroke="#4f6f9c" stroke-width="3" stroke-linecap="round"><line x1="42" y1="451" x2="42" y2="493"/><line x1="23.8" y1="461.5" x2="60.2" y2="482.5"/><line x1="23.8" y1="482.5" x2="60.2" y2="461.5"/></g>
+            <circle cx="42" cy="472" r="11" fill="#9fb3cf"/><circle cx="42" cy="465" r="2.5" fill="#0a1428"/><circle cx="42" cy="472" r="4" fill="#0a1428"/>
+          </g>
+          <g id="fxWheelF">
+            <circle cx="148" cy="468" r="32" fill="#0a1428"/>
+            <g stroke="#4f6f9c" stroke-width="3" stroke-linecap="round"><line x1="148" y1="443" x2="148" y2="493"/><line x1="126.3" y1="455.5" x2="169.7" y2="480.5"/><line x1="126.3" y1="480.5" x2="169.7" y2="455.5"/></g>
+            <circle cx="148" cy="468" r="12" fill="#9fb3cf"/><circle cx="148" cy="460" r="2.5" fill="#0a1428"/><circle cx="148" cy="468" r="4" fill="#0a1428"/>
+          </g>
+          <g class="fx-body"><g id="fxMastFront">
+            <rect x="208" y="404" width="10" height="70" fill="#1b2c47"/>
+            <rect x="208" y="468" width="78" height="6" fill="#1b2c47"/>
+            <rect x="214" y="454" width="70" height="14" fill="#a67c4a"/>
+            <rect x="214" y="454" width="70" height="4" fill="#c89a60"/>
+            <rect x="220" y="402" width="60" height="52" rx="3" fill="#dbe5f2"/>
+            <rect x="247" y="402" width="6" height="52" fill="#b7c6db"/>
+            <rect x="228" y="414" width="16" height="10" fill="#9fb3cf"/>
+          </g></g>
+        </g>
+        <rect id="fxHit" x="0" y="266" width="292" height="238" fill="transparent" pointer-events="all"/>
       </g>
     </svg>
     <div class="inner hero-inner">
@@ -139,8 +178,29 @@
           <a class="btn btn-ghost" href="#/billing">기성처리</a>
         </div>
         <p class="hero-note">파일은 서버로 보내지 않고 이 브라우저 안에서만 계산·저장합니다.</p>
+        <div class="hero-fx" id="heroFx">
+          <div class="fx-head">
+            <p class="fx-status"><span class="fx-tag">예시 연출</span> <span class="fx-now">지금 <b id="fxSection">요철</b> 구간</span> <span>· <b id="fxLap">1</b>바퀴째</span> <span>· 운전시간 <b id="fxClock" class="fx-clock">00:00:00</b></span></p>
+            <button type="button" class="fx-play" id="fxPlay" aria-pressed="false"><span class="fx-play-ico" aria-hidden="true"></span>움직임 멈춤</button>
+          </div>
+          <div class="fx-chips" role="group" aria-label="코스 구간 — 누르면 지게차가 그 구간으로 가고, 그 구간에서 일지에 적는 칸을 보여 줍니다">
+            <button type="button" class="fx-chip" data-sec="flat" aria-pressed="false">평지</button>
+            <button type="button" class="fx-chip" data-sec="bump" aria-pressed="false">요철</button>
+            <button type="button" class="fx-chip" data-sec="slope" aria-pressed="false">경사로</button>
+            <button type="button" class="fx-chip" data-sec="cone" aria-pressed="false">라바콘</button>
+          </div>
+          <div class="fx-info" id="fxInfo">
+            <p class="is-on" data-sec="none">구간을 누르면 지게차가 그 구간으로 가고, 그 구간에서 일지의 어느 칸을 적는지 여기에 보입니다. 지게차에 마우스를 올리면 전조등이 켜집니다.</p>
+            <p data-sec="flat"><b>평지</b> — 가동시간이 쌓이는 기본 주행입니다. 일지에는 시험 항목별 시간·회수와 Hour Meter(금일 = 전일 + 가동)를 적습니다. <a href="#/tpr">1. 시험일지 입력 열기</a></p>
+            <p data-sec="bump"><b>요철</b> — 충격이 되풀이되는 구간입니다. 이상이 보이면 일지의 「문제점/조치내용」에 적습니다. 저장하면 안내 띠가 뜨고, 주간 현황의 모델별 문제점과 「문제점 메일 정리」로 이어집니다. <a href="#/weekly">3. 주간 현황 열기</a></p>
+            <p data-sec="slope"><b>경사로</b> — 짐을 싣고 오르내리는 구간입니다. 배터리 구간별 시작/종료 %와 주유 기록(경유·LPG·요소수)을 적습니다. 주유 기록은 기성처리의 연료비 정산에 쓰입니다. <a href="#/billing">4. 기성처리 열기</a></p>
+            <p data-sec="cone"><b>라바콘</b> — 코스 한 바퀴를 마치는 구간입니다. 쌓인 가동시간은 시험일지 정리의 누적 가동시간·누적 Ratio와 주간 현황의 진행 시간(현재/목표, 기본 1000h)으로 모입니다. <a href="#/summary">2. 시험일지 정리 열기</a></p>
+          </div>
+          <p class="fx-live" id="fxLive" aria-live="polite"></p>
+        </div>
       </div>
     </div>
+    <div class="fx-tip" id="fxTip" aria-hidden="true" hidden></div>
   </section>
 
   <main id="main" class="inner main" tabindex="-1"></main>
@@ -165,5 +225,6 @@
   <script src="js/sample-data.js"></script>
   <script src="js/store.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/hero-fx.js"></script>
 </body>
 </html>

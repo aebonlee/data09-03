@@ -1568,4 +1568,5 @@
   // 대화상자 안에서 Enter 를 눌러도 저장 없이 닫히지 않게 막습니다
   document.getElementById('dialogForm').addEventListener('submit', function (e) { e.preventDefault(); });
   render();
+  document.documentElement.classList.add('app-ready');
 })();

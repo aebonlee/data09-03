@@ -337,3 +337,47 @@ table.list th { color: var(--navy-900); }
 .sub-grid .flow-card { flex-direction: row; align-items: center; gap: 12px; }
 .sub-grid .flow-card div { min-width: 0; }
 .home-kpis .kpi { border-top: 3px solid var(--navy-700); }
+
+/* ── 2026-09-30 저녁 — 머리 그림 움직임·이벤트(js/hero-fx.js) ── */
+/* 그림 위를 덮는 층이 마우스를 가로채지 않게 — 글 상자만 누를 수 있음 */
+.hero::before, .hero-inner { pointer-events: none; }
+.hero-copy { pointer-events: auto; }
+.hero-art .fx-hot, .hero-art #fxHit { cursor: pointer; }
+#fxSecHi { transition: opacity .3s; }
+.hero-fx { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(194, 209, 230, .28); }
+.fx-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.fx-status { margin: 0; color: var(--on-navy-muted); font-size: .9rem; display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: center; }
+.fx-status b { color: var(--on-navy); font-weight: 700; }
+.fx-now b { display: inline-block; min-width: 3.8em; padding: 0 6px; border-radius: 4px; background: rgba(242, 180, 60, .16); color: var(--accent); text-align: center; }
+.fx-clock { font-variant-numeric: tabular-nums; }
+.fx-tag { padding: 1px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: .78rem; font-weight: 700; }
+.fx-play, .fx-chip { min-height: 44px; padding: 6px 14px; border-radius: var(--radius); border: 1px solid rgba(255, 255, 255, .55); background: transparent; color: var(--on-navy); font-weight: 700; cursor: pointer; }
+.fx-play { display: inline-flex; align-items: center; gap: 8px; }
+.fx-play-ico { width: 12px; height: 12px; flex: none; border-left: 4px solid currentColor; border-right: 4px solid currentColor; }
+.fx-play:hover, .fx-chip:hover { background: var(--navy-700); border-color: var(--on-navy); }
+/* 눌린(멈춤이 켜진) 상태는 노랑으로 채움 — 글자는 그대로 「움직임 멈춤」 */
+.fx-play[aria-pressed="true"], .fx-play[aria-pressed="true"]:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.fx-play:focus-visible, .fx-chip:focus-visible, .fx-info a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fx-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.fx-chip { position: relative; }
+.fx-chip.is-now::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: var(--accent); }
+.fx-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.fx-chip[aria-pressed="true"].is-now::after { background: var(--on-accent); }
+/* 설명 5개를 한 칸에 겹쳐 두어 가장 긴 것 높이로 고정 — 글이 바뀌어도 아래가 밀리지 않음 */
+.fx-info { display: grid; margin-top: 10px; padding: 10px 12px; border-left: 4px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0; background: rgba(23, 58, 104, .55); color: var(--on-navy); font-size: .92rem; }
+.fx-info > p { grid-area: 1 / 1; margin: 0; visibility: hidden; }
+.fx-info > p.is-on { visibility: visible; }
+.fx-info b { color: var(--accent); }
+.fx-info a { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.fx-info.is-flash { animation: fxFlash .9s ease-out; }
+@keyframes fxFlash { from { background: rgba(242, 180, 60, .28); } to { background: rgba(23, 58, 104, .55); } }
+.fx-live { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.fx-tip { position: absolute; z-index: 2; left: 0; top: 0; transform: translate(-50%, -100%); pointer-events: none; padding: 4px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--navy-950); color: var(--on-navy); font-size: .85rem; font-weight: 700; white-space: nowrap; box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+.fx-tip[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  #fxSecHi { transition: none; }
+  .fx-info.is-flash { animation: none; }
+}
+@media print { .hero-fx, .fx-tip { display: none !important; } }
+/* 첫 화면을 그리기 전(큰 엑셀 라이브러리를 읽는 동안) 바닥글이 먼저 보였다가 밀려나는 것을 막음 — app.js 가 첫 화면을 그린 뒤 app-ready */
+html:not(.app-ready) .site-footer { visibility: hidden; }
