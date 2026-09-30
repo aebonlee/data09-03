@@ -116,7 +116,7 @@
   }
 
   // ── 라우팅 ────────────────────────────────────────────────
-  function route() { return (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'tpr'; }
+  function route() { return (location.hash.replace(/^#\/?/, '').split('/')[0]) || 'home'; }
   function subRoute() { return location.hash.replace(/^#\/?/, '').split('/')[1] || ''; }
   function render() {
     var r = route();
@@ -128,7 +128,9 @@
     });
     document.getElementById('sampleBanner').hidden = !db._sample;
     if (!S.available()) document.getElementById('storeBanner').hidden = false;
-    if (r === 'billing') renderBilling(main);
+    document.getElementById('homeHero').hidden = r !== 'home';
+    if (r === 'home') renderHome(main);
+    else if (r === 'billing') renderBilling(main);
     else if (r === 'dashboard') renderDashboard(main);
     else if (r === 'import' && imp) renderImport(main);
     else if (r === 'summary') renderSummary(main);
@@ -138,6 +140,45 @@
     main.setAttribute('data-route', r);
   }
   window.addEventListener('hashchange', function () { render(); window.scrollTo(0, 0); });
+
+  // ── 처음 화면(2026-09-30 디자인 요청) — 머리 그림은 index.html 의 #homeHero ──
+  var FLOW = [
+    ['tpr', '1', '시험일지 입력', '운전자 TPR 일지를 양식 순서 그대로 옮겨 적습니다. 사진·PDF 를 옆에 띄워 두고 봅니다.'],
+    ['summary', '2', '시험일지 정리', '모델·호기별 누적 가동시간·아워미터·연료를 자동으로 더해 정리표와 엑셀을 만듭니다.'],
+    ['weekly', '3', '주간 현황', '모델별 진행 시간(현재/목표)과 문제점을 모아 수요일 현황 메일 본문을 만듭니다.'],
+    ['billing', '4', '기성처리', '기간을 정해 운전시간·연료비 기성 청구서를 받은 양식 배치 그대로 내려받습니다.']
+  ];
+  function renderHome(main) {
+    var rows = db.rows || [];
+    var us = units();
+    var live = us.filter(function (u) { return !u.archived; }).length;
+    var last = rows.reduce(function (m, r) { return r.date && r.date > m ? r.date : m; }, '');
+    var issues = rows.filter(function (r) { return r.issue && String(r.issue).trim(); }).length;
+    main.appendChild(h('section', { class: 'home-sec', 'aria-labelledby': 'homeFlow' },
+      h('h2', { id: 'homeFlow' }, '업무 흐름 4단계'),
+      h('ol', { class: 'flow-grid' }, FLOW.map(function (f) {
+        return h('li', null, h('a', { class: 'flow-card', href: '#/' + f[0] },
+          h('span', { class: 'flow-no', 'aria-hidden': 'true' }, f[1]),
+          h('h3', null, f[1] + '. ' + f[2]),
+          h('p', null, f[3]),
+          h('span', { class: 'flow-go' }, '열기 →')));
+      }))));
+    main.appendChild(h('section', { class: 'home-sec', 'aria-labelledby': 'homeState' },
+      h('h2', { id: 'homeState' }, '지금 이 브라우저에 저장된 데이터'),
+      rows.length ? h('div', { class: 'kpis home-kpis' },
+        h('div', { class: 'kpi' }, h('div', { class: 'k' }, '저장된 일지'), h('div', { class: 'v' }, fmt(rows.length), h('small', null, '장'))),
+        h('div', { class: 'kpi' }, h('div', { class: 'k' }, '사용 중인 모델·호기'), h('div', { class: 'v' }, fmt(live), h('small', null, '대'))),
+        h('div', { class: 'kpi' }, h('div', { class: 'k' }, '가장 최근 일지'), h('div', { class: 'v' }, last || '-')),
+        h('div', { class: 'kpi' }, h('div', { class: 'k' }, '문제점이 적힌 일지'), h('div', { class: 'v' }, fmt(issues), h('small', null, '장'))))
+        : h('div', { class: 'card' },
+          h('p', null, '아직 저장된 일지가 없습니다. 시험일지를 바로 입력하거나, 지금 쓰는 정리 엑셀을 불러오거나, 예시 데이터로 먼저 둘러볼 수 있습니다.'),
+          h('div', { class: 'btn-row' }, h('a', { class: 'btn btn-primary', href: '#/tpr' }, '시험일지 입력'), importButton(false), sampleButton(false)))));
+    main.appendChild(h('section', { class: 'home-sec', 'aria-labelledby': 'homeSub' },
+      h('h2', { id: 'homeSub' }, '보조 화면'),
+      h('div', { class: 'sub-grid' },
+        h('a', { class: 'flow-card', href: '#/data' }, h('div', null, h('h3', null, '현황 데이터'), h('p', null, '저장된 일지 전체 목록과 입력값 검사, 엑셀·CSV 불러오기·내보내기'))),
+        h('a', { class: 'flow-card', href: '#/dashboard' }, h('div', null, h('h3', null, '대시보드'), h('p', null, '모델별 가동시간·연료 막대, 월별 추이, 입력 빠진 날'))))));
+  }
 
   // ── 공통 버튼 ─────────────────────────────────────────────
   function sampleButton(primary) {

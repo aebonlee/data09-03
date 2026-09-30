@@ -12,11 +12,12 @@
   <a class="skip" href="#main">본문으로 건너뛰기</a>
   <header class="site-header">
     <div class="inner header-inner">
-      <a class="brand" href="#/tpr">
+      <a class="brand" href="#/home">
         <span class="brand-name">내구시험 일지 정리·기성 집계</span>
         <span class="brand-sub">TPR 일지 입력 → 모델별 정리표 → 주간 현황 메일 → 운전시간·연료비 기성 청구서</span>
       </a>
       <nav class="nav" id="nav" aria-label="주 메뉴">
+        <a href="#/home" data-route="home">처음 화면</a>
         <a href="#/tpr" data-route="tpr">1. 시험일지 입력</a>
         <a href="#/summary" data-route="summary">2. 시험일지 정리</a>
         <a href="#/weekly" data-route="weekly">3. 주간 현황</a>
@@ -29,6 +30,117 @@
 
   <div id="sampleBanner" class="sample-banner" hidden>지금 보이는 것은 <strong>예시 데이터</strong>입니다. 실제 시험 기록이 아닌 가상의 값입니다.</div>
   <div id="storeBanner" class="store-banner" hidden>이 브라우저에서는 저장소를 쓸 수 없어, 창을 닫으면 데이터가 사라집니다. 작업 후 엑셀로 내보내 두세요.</div>
+
+  <!-- 처음 화면 머리 그림: 지게차 내구시험장(위: 코스 배치도, 아래: 요철·경사로·콘 구간을 달리는 지게차). 직접 그린 SVG, 외부 이미지 없음 -->
+  <section id="homeHero" class="hero" aria-labelledby="heroTitle" hidden>
+    <svg class="hero-art" viewBox="0 0 1600 600" preserveAspectRatio="xMaxYMax slice" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="hgSky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#081629"/>
+          <stop offset=".8" stop-color="#14335e"/>
+        </linearGradient>
+        <pattern id="hgGrid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M40 0H0V40" fill="none" stroke="#1a3a66" stroke-width="1"/>
+        </pattern>
+        <pattern id="hgWin" width="22" height="24" patternUnits="userSpaceOnUse">
+          <rect x="6" y="6" width="9" height="11" fill="#22497c"/>
+        </pattern>
+      </defs>
+      <rect width="1600" height="600" fill="url(#hgSky)"/>
+      <rect width="1600" height="500" fill="url(#hgGrid)" opacity=".55"/>
+
+      <!-- 멀리 보이는 시험동 건물(특정 회사 건물이 아님) -->
+      <g>
+        <rect x="40" y="360" width="160" height="140" fill="#102b50"/>
+        <rect x="40" y="360" width="160" height="140" fill="url(#hgWin)"/>
+        <rect x="210" y="318" width="120" height="182" fill="#123056"/>
+        <rect x="210" y="318" width="120" height="182" fill="url(#hgWin)"/>
+        <rect x="340" y="384" width="230" height="116" fill="#102b50"/>
+        <rect x="340" y="384" width="230" height="116" fill="url(#hgWin)"/>
+        <rect x="440" y="440" width="60" height="60" fill="#0d2645"/>
+      </g>
+
+      <!-- 내구시험 코스 배치도(위에서 본 모습): 곡선·S자 회전, 가운데 차선, 출발선, 진행 방향, 라바콘 -->
+      <g opacity=".92">
+        <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#3d6aa6" stroke-width="38" stroke-linejoin="round"/>
+        <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#173a68" stroke-width="31" stroke-linejoin="round"/>
+        <path d="M700,160 C700,80 800,58 890,86 S1050,176 1140,128 S1300,46 1400,70 S1572,150 1512,222 S1310,284 1180,250 S990,206 890,254 S700,244 700,160 Z" fill="none" stroke="#9ab8e0" stroke-width="2.5" stroke-dasharray="12 12"/>
+        <rect x="684" y="156" width="32" height="8" fill="#ffffff"/>
+        <rect x="692" y="156" width="8" height="4" fill="#0b1f3a"/>
+        <rect x="708" y="156" width="8" height="4" fill="#0b1f3a"/>
+        <rect x="684" y="160" width="8" height="4" fill="#0b1f3a"/>
+        <rect x="700" y="160" width="8" height="4" fill="#0b1f3a"/>
+        <polygon points="1390,61 1410,70 1390,79" fill="#f2b43c"/>
+        <g fill="#f07a2a">
+          <circle cx="890" cy="56" r="6"/><circle cx="1140" cy="160" r="6"/><circle cx="1400" cy="40" r="6"/>
+          <circle cx="1546" cy="226" r="6"/><circle cx="890" cy="286" r="6"/>
+        </g>
+      </g>
+
+      <!-- 옆에서 본 시험 구간: 평지 → 요철(범프) 3개 → 경사로 오르막·평탄·내리막 -->
+      <path d="M0,500 H1186 A14,14 0 0 1 1214,500 H1236 A14,14 0 0 1 1264,500 H1286 A14,14 0 0 1 1314,500 H1336 L1420,440 H1476 L1552,500 H1600 V600 H0 Z" fill="#0d2645"/>
+      <path d="M0,500 H1186 A14,14 0 0 1 1214,500 H1236 A14,14 0 0 1 1264,500 H1286 A14,14 0 0 1 1314,500 H1336 L1420,440 H1476 L1552,500 H1600" fill="none" stroke="#5a86c0" stroke-width="4"/>
+      <path d="M1336,500 L1420,440 H1476 L1552,500" fill="none" stroke="#f2b43c" stroke-width="4" stroke-dasharray="16 12"/>
+      <g fill="#f2b43c">
+        <path d="M1186,500 A14,14 0 0 1 1214,500 Z"/><path d="M1236,500 A14,14 0 0 1 1264,500 Z"/><path d="M1286,500 A14,14 0 0 1 1314,500 Z"/>
+      </g>
+      <g stroke="#0b1f3a" stroke-width="5">
+        <line x1="1200" y1="487" x2="1200" y2="500"/><line x1="1250" y1="487" x2="1250" y2="500"/><line x1="1300" y1="487" x2="1300" y2="500"/>
+      </g>
+      <line x1="0" y1="522" x2="1600" y2="522" stroke="#c7d7ee" stroke-width="3" stroke-dasharray="28 24" opacity=".55"/>
+      <line x1="0" y1="566" x2="1600" y2="566" stroke="#1f4577" stroke-width="2"/>
+
+      <!-- 라바콘 -->
+      <g>
+        <polygon points="748,500 772,500 764,466 756,466" fill="#f07a2a"/><polygon points="752,484 768,484 766,476 754,476" fill="#ffffff"/><rect x="744" y="497" width="32" height="5" fill="#0a1428"/>
+        <polygon points="808,500 832,500 824,466 816,466" fill="#f07a2a"/><polygon points="812,484 828,484 826,476 814,476" fill="#ffffff"/><rect x="804" y="497" width="32" height="5" fill="#0a1428"/>
+        <polygon points="1566,500 1590,500 1582,466 1574,466" fill="#f07a2a"/><polygon points="1570,484 1586,484 1584,476 1572,476" fill="#ffffff"/><rect x="1562" y="497" width="32" height="5" fill="#0a1428"/>
+      </g>
+
+      <!-- 지게차(짐을 실은 채 요철 구간으로 들어가는 모습) -->
+      <g transform="translate(900 0)">
+        <g stroke="#7fa3d6" stroke-width="4" stroke-linecap="round" opacity=".8">
+          <line x1="-70" y1="420" x2="-22" y2="420"/><line x1="-92" y1="442" x2="-32" y2="442"/><line x1="-62" y1="464" x2="-16" y2="464"/>
+        </g>
+        <rect x="186" y="272" width="14" height="202" fill="#2c4468"/>
+        <rect x="200" y="284" width="8" height="190" fill="#3b5780"/>
+        <rect x="176" y="300" width="8" height="140" fill="#9fb3cf"/>
+        <path d="M44,398 L54,300 M136,398 L128,300" stroke="#1b2c47" stroke-width="8" stroke-linecap="round"/>
+        <rect x="40" y="292" width="100" height="10" rx="3" fill="#1b2c47"/>
+        <circle cx="132" cy="318" r="5" fill="#fff3c4"/>
+        <rect x="62" y="350" width="14" height="48" rx="4" fill="#1b2c47"/>
+        <path d="M84,398 L88,358 Q98,350 108,358 L114,398 Z" fill="#3d6aa6"/>
+        <circle cx="98" cy="338" r="12" fill="#e9eef6"/>
+        <line x1="108" y1="368" x2="130" y2="382" stroke="#3d6aa6" stroke-width="7" stroke-linecap="round"/>
+        <line x1="124" y1="394" x2="138" y2="372" stroke="#1b2c47" stroke-width="5" stroke-linecap="round"/>
+        <path d="M6,470 L6,420 Q6,398 30,398 L126,398 L150,428 L184,428 L184,470 Z" fill="#f2b43c"/>
+        <path d="M6,470 L6,420 Q6,398 30,398 L40,398 L40,470 Z" fill="#d99a22"/>
+        <rect x="44" y="446" width="136" height="5" fill="#0b1f3a" opacity=".7"/>
+        <circle cx="42" cy="472" r="28" fill="#0a1428"/><circle cx="42" cy="472" r="11" fill="#9fb3cf"/><circle cx="42" cy="472" r="4" fill="#0a1428"/>
+        <circle cx="148" cy="468" r="32" fill="#0a1428"/><circle cx="148" cy="468" r="12" fill="#9fb3cf"/><circle cx="148" cy="468" r="4" fill="#0a1428"/>
+        <rect x="208" y="404" width="10" height="70" fill="#1b2c47"/>
+        <rect x="208" y="468" width="78" height="6" fill="#1b2c47"/>
+        <rect x="214" y="454" width="70" height="14" fill="#a67c4a"/>
+        <rect x="214" y="454" width="70" height="4" fill="#c89a60"/>
+        <rect x="220" y="402" width="60" height="52" rx="3" fill="#dbe5f2"/>
+        <rect x="247" y="402" width="6" height="52" fill="#b7c6db"/>
+        <rect x="228" y="414" width="16" height="10" fill="#9fb3cf"/>
+      </g>
+    </svg>
+    <div class="inner hero-inner">
+      <div class="hero-copy">
+        <p class="hero-eyebrow">지게차 내구시험 운영</p>
+        <h1 id="heroTitle">내구시험 일지 정리·기성 집계</h1>
+        <p class="hero-lead">운전자가 쓴 TPR 일지를 한 번 입력하면 모델별 시험일지 정리표, 수요일 주간 현황 메일, 월말 운전시간·연료비 기성 청구서까지 이어서 만듭니다.</p>
+        <div class="hero-actions">
+          <a class="btn btn-accent" href="#/tpr">시험일지 입력 시작</a>
+          <a class="btn btn-ghost" href="#/weekly">주간 현황 보기</a>
+          <a class="btn btn-ghost" href="#/billing">기성처리</a>
+        </div>
+        <p class="hero-note">파일은 서버로 보내지 않고 이 브라우저 안에서만 계산·저장합니다.</p>
+      </div>
+    </div>
+  </section>
 
   <main id="main" class="inner main" tabindex="-1"></main>
 

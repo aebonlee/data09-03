@@ -2,17 +2,26 @@
 :root {
   --container-wide: 1280px;
   --container-pad: 16px;
-  --bg: #f4f6f8;
+  /* 2026-09-30 디자인 — 회사 건물과 같은 다크블루 계통(수강생 요청). 글자 대비는 docs/개발일지.md 에 계산값 */
+  --navy-950: #081629;
+  --navy-900: #0b1f3a;
+  --navy-800: #102b50;
+  --navy-700: #173a68;
+  --on-navy: #ffffff;
+  --on-navy-muted: #c2d1e6;
+  --accent: #f2b43c;          /* 지게차 차체·범프 구간의 노랑 — 어두운 면 위 버튼 */
+  --on-accent: #0b1f3a;
+  --bg: #edf1f7;
   --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --text: #1b2430;
-  --muted: #56616f;
-  --line: #d5dbe2;
-  --primary: #1f5fa8;
-  --primary-dark: #174a84;
+  --surface-2: #e5ebf4;
+  --text: #13233b;
+  --muted: #4b5a70;
+  --line: #cbd5e3;
+  --primary: #1a4c8c;
+  --primary-dark: #0f3668;
   --on-primary: #ffffff;
-  --bar: #2f6fb8;
-  --bar-track: #e3e9f0;
+  --bar: #1f5aa3;
+  --bar-track: #dbe3ef;
   --danger: #b3261e;
   --danger-bg: #fdecea;
   --warn: #7a5200;
@@ -56,15 +65,16 @@ a { color: var(--primary); }
 [hidden] { display: none !important; }
 
 /* ── 머리 ─────────────────────────────── */
-.site-header { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
+.site-header { background: var(--navy-900); border-bottom: 1px solid var(--navy-700); position: sticky; top: 0; z-index: 10; color: var(--on-navy); }
 .header-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding-top: 10px; padding-bottom: 10px; }
-.brand { display: flex; flex-direction: column; text-decoration: none; color: var(--text); margin-right: auto; min-width: 0; }
+.brand { display: flex; flex-direction: column; text-decoration: none; color: var(--on-navy); margin-right: auto; min-width: 0; border-left: 4px solid var(--accent); padding-left: 10px; }
 .brand-name { font-weight: 800; font-size: 1.1rem; }
-.brand-sub { font-size: .8rem; color: var(--muted); }
+.brand-sub { font-size: .8rem; color: var(--on-navy-muted); }
 .nav { display: flex; flex-wrap: wrap; gap: 4px; }
-.nav a { padding: 8px 12px; border-radius: var(--radius); text-decoration: none; color: var(--text); font-weight: 600; white-space: nowrap; }
-.nav a:hover { background: var(--bg); }
-.nav a[aria-current="page"] { background: var(--primary); color: var(--on-primary); }
+.nav a { padding: 8px 12px; border-radius: var(--radius); text-decoration: none; color: var(--on-navy); font-weight: 600; white-space: nowrap; }
+.nav a:hover { background: var(--navy-700); }
+.nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav a[aria-current="page"] { background: var(--accent); color: var(--on-accent); }
 @media (max-width: 720px) {
   .brand { width: 100%; }
   .nav { width: 100%; }
@@ -75,7 +85,7 @@ a { color: var(--primary); }
 
 .main { padding-top: 24px; padding-bottom: 48px; min-height: 60vh; }
 .main:focus { outline: none; }
-.site-footer { border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: .9rem; padding: 16px 0; }
+.site-footer { border-top: 1px solid var(--navy-700); background: var(--navy-900); color: var(--on-navy-muted); font-size: .9rem; padding: 16px 0; }
 
 /* ── 공통 부품 ─────────────────────────── */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; margin-bottom: 20px; min-width: 0; }
@@ -275,3 +285,55 @@ td.diff { font-weight: 700; }
 .dow-warn:empty { display: none; }
 .dow-warn { margin-top: 6px; padding: 8px 10px; border-radius: var(--radius); background: var(--warn-bg); color: #5a4400; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; word-break: keep-all; overflow-wrap: break-word; }
 .lpg-months { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 12px; }
+
+/* ── 2026-09-30 디자인 — 처음 화면(내구시험장 코스 + 지게차)·다크블루 ── */
+.toast { background: var(--navy-900); }
+.page-head h1 { color: var(--navy-900); }
+.card { border-top: 3px solid var(--navy-700); }
+table.list th { color: var(--navy-900); }
+
+.hero { position: relative; overflow: hidden; background: var(--navy-900); color: var(--on-navy); isolation: isolate; }
+.hero-art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: -2; }
+.hero { --copy-w: 32rem; --copy-end: calc(max(0px, (100% - var(--container-wide) - 2 * var(--container-pad)) / 2) + var(--container-pad) + var(--copy-w) + 16px); }
+/* 글 뒤만 어둡게 — 글 상자 끝(--copy-end)까지 .92, 그 뒤 120px 안에 사라짐. 코스·지게차는 그 오른쪽에 온전히 보임 */
+.hero::before { content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(90deg, rgba(8, 22, 41, .95) 0, rgba(8, 22, 41, .92) var(--copy-end), rgba(8, 22, 41, 0) calc(var(--copy-end) + 120px)); }
+.hero-inner { min-height: clamp(440px, 34vw, 640px); display: flex; align-items: center; padding-top: 48px; padding-bottom: 56px; }
+.hero-copy { max-width: var(--copy-w); min-width: 0; }
+.hero-eyebrow { display: inline-block; margin: 0 0 12px; padding: 3px 10px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: .85rem; font-weight: 700; }
+.hero h1 { font-size: clamp(1.6rem, 1.1rem + 2vw, 2.4rem); color: var(--on-navy); margin-bottom: 14px; }
+.hero-lead { color: var(--on-navy-muted); font-size: 1.02rem; margin-bottom: 20px; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn-accent { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn-accent:hover { background: #ffc85a; border-color: #ffc85a; }
+.btn-ghost { background: transparent; color: var(--on-navy); border-color: rgba(255, 255, 255, .55); }
+.btn-ghost:hover { background: var(--navy-700); border-color: var(--on-navy); }
+.hero .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hero-note { margin: 16px 0 0; color: var(--on-navy-muted); font-size: .88rem; }
+/* 좁은 화면: 글은 위(어두운 면), 코스 그림은 아래에 가리지 않고 보이게 */
+@media (max-width: 1199px) {
+  .hero { display: flex; flex-direction: column; }
+  .hero::before { display: none; }
+  .hero-inner { min-height: 0; padding-top: 32px; padding-bottom: 20px; width: 100%; }
+  .hero-art { position: static; order: 2; height: clamp(190px, 37.5vw, 400px); }
+}
+@media print { .hero { display: none !important; } }
+
+.home-sec { margin-bottom: 28px; }
+.home-sec > h2 { color: var(--navy-900); display: flex; align-items: center; gap: 10px; }
+.home-sec > h2::before { content: ""; width: 6px; height: 1.1em; border-radius: 3px; background: var(--accent); flex: none; }
+.flow-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; counter-reset: none; }
+@media (max-width: 1100px) { .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .flow-grid { grid-template-columns: minmax(0, 1fr); } }
+.flow-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; text-decoration: none; color: var(--text); position: relative; }
+.flow-card:hover { border-color: var(--primary); box-shadow: 0 4px 14px rgba(11, 31, 58, .12); }
+.flow-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.flow-no { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: var(--navy-900); color: var(--on-navy); font-weight: 800; }
+.flow-card h3 { margin: 4px 0 0; color: var(--navy-900); }
+.flow-card p { margin: 0; color: var(--muted); font-size: .93rem; }
+.flow-go { margin-top: auto; padding-top: 8px; color: var(--primary); font-weight: 700; font-size: .92rem; }
+.sub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 560px) { .sub-grid { grid-template-columns: minmax(0, 1fr); } }
+.sub-grid .flow-card { flex-direction: row; align-items: center; gap: 12px; }
+.sub-grid .flow-card div { min-width: 0; }
+.home-kpis .kpi { border-top: 3px solid var(--navy-700); }
