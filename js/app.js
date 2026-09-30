@@ -221,7 +221,7 @@
     var f = h('form', { class: 'filters', onsubmit: function (e) { e.preventDefault(); } });
     var fFrom = h('input', { type: 'date', name: 'from', value: dataView.from });
     var fTo = h('input', { type: 'date', name: 'to', value: dataView.to });
-    var fModel = select('model', [['', '전체']].concat(L.models(db.rows)), dataView.model);
+    var fModel = select('model', [['', '전체']].concat(pickerModelsFor(dataView.model)), dataView.model);
     var fOnly = h('input', { type: 'checkbox', name: 'only', checked: dataView.onlyIssues });
     function apply() {
       dataView.from = fFrom.value; dataView.to = fTo.value; dataView.model = fModel.value; dataView.onlyIssues = fOnly.checked; dataView.page = 0;
@@ -508,6 +508,12 @@
 
   // ── 공통: 모델·호기 ───────────────────────────────────────
   function units() { return L.unitList(db.rows, db.masters); }
+  // 필터용 모델명: 일지가 있는 모델 중 사용 종료가 아닌 것(지금 고른 값은 사용 종료여도 남김)
+  function pickerModelsFor(current) {
+    var live = {};
+    L.pickerModels(db.rows, db.masters, showArchived()).forEach(function (m) { live[m] = true; });
+    return L.models(db.rows).filter(function (m) { return live[m] || m === current; });
+  }
   function settings() { db.settings = db.settings || {}; return db.settings; }
   // 공휴일 목록(마감일·휴일 근무 계산용) — 사용자가 고친 글자가 있으면 그것, 없으면 올해·내년 초안
   function holidayText() {
@@ -633,7 +639,8 @@
       return el;
     }
     // 1. 머리
-    var us = units();
+    // 사용 종료 모델은 고르는 목록에서 뺍니다(수강생 요청 09-30). 적어 넣으면 그대로 저장됩니다.
+    var us = units().filter(function (u) { return !u.archived || showArchived(); });
     var dl = h('datalist', { id: 'dlModels' }, us.map(function (u) { return h('option', { value: u.model }); }));
     var dlU = h('datalist', { id: 'dlUnits' }, us.map(function (u) { return u.unit_no ? h('option', { value: u.unit_no }) : null; }));
     var dlW = h('datalist', { id: 'dlWeather' }, ['맑음', '흐림', '비', '눈', '흐림/비'].map(function (w) { return h('option', { value: w }); }));
@@ -890,35 +897,114 @@
   }
 
   // ── 시험일지 정리(모델별 누적) ────────────────────────────
+  // 시험일지 정리 — 모델 목록 기간 보기(수강생 요청 09-30). 기간 종류·「사용 종료도 보기」는 다음에 열어도 그대로 둡니다.
+  function sumView() {
+    var st = settings();
+    st.sumView = st.sumView || { kind: 'month', from: '', to: '', onlyActive: true };
+    return st.sumView;
+  }
+  function showArchived() { return !!settings().showArchived; }
+  function setArchived(u, flag) {
+    db.masters = db.masters || {};
+    var m = db.masters[u.key] || { model: u.model, unit_no: u.unit_no, initialHour: u.initialHour, targetHours: u.targetDefault ? null : u.targetHours, extended: !!u.extended, pg: u.pg || '', project: u.project || '', fuel: u.fuel || '' };
+    m.archived = !!flag;
+    db.masters[u.key] = m;
+    save();
+    toast(flag ? u.label + ' — 사용 종료로 두었습니다. 입력·필터 목록에서 빠집니다(일지와 청구는 그대로)' : u.label + ' — 다시 사용 중으로 돌렸습니다');
+    render();
+  }
+  function sheetName(label, used, fallback) {
+    var n = label.replace(/[\[\]:*?\/\\]/g, '_').slice(0, 31) || fallback; var b = n, i = 2;
+    while (used[n]) n = b.slice(0, 27) + '(' + (i++) + ')';
+    used[n] = true;
+    return n;
+  }
   function renderSummary(main) {
+    var sv = sumView();
+    var P = L.viewPeriod(sv.kind, today(), holidays(), sv);
+    var all = units();
+    var fu = L.filterUnits(db.rows, all, { from: P.from, to: P.to, onlyActive: sv.onlyActive !== false, showArchived: showArchived() });
+    var us = fu.list;
+    var perOpt = P.kind === 'all' ? {} : { from: P.from || '0000-00-00', to: P.to };
+    var perLabel = P.kind === 'all' ? '전체 기간' : (P.from || '처음') + ' ~ ' + (P.to || '마지막 일지');
     main.appendChild(h('div', { class: 'page-head' }, h('h1', null, '시험일지 정리'),
       h('div', { class: 'btn-row' },
         h('button', { type: 'button', class: 'btn', onclick: function () { editMaster(null); } }, '모델 추가'),
-        units().length ? h('button', { type: 'button', class: 'btn', onclick: function () {
+        us.length ? h('button', { type: 'button', class: 'btn', onclick: function () {
           var sheets = {}, used = {};
-          units().forEach(function (u) {
-            var n = u.label.replace(/[\[\]:*?\/\\]/g, '_').slice(0, 31) || '모델'; var b = n, i = 2;
-            while (used[n]) n = b.slice(0, 27) + '(' + (i++) + ')';
-            used[n] = true;
-            sheets[n] = L.summarySheet(L.unitSummary(db.rows, u));
-          });
-          writeXlsx('시험일지정리_전체모델' + tag() + '_' + today() + '.xlsx', sheets);
-        } }, '전체 모델 정리 엑셀') : null)));
-    var us = units();
-    if (!us.length) {
+          us.forEach(function (u) { sheets[sheetName(u.label, used, '모델')] = L.summarySheet(L.unitSummary(db.rows, u, perOpt), { periodOnly: P.kind !== 'all' }); });
+          writeXlsx('시험일지정리_' + (P.kind === 'all' ? '전체기간' : (P.from || '처음') + '_' + (P.to || '끝')) + '_' + us.length + '개모델' + tag() + '_' + today() + '.xlsx', sheets);
+        } }, '보이는 모델 정리 엑셀 (' + us.length + '개)') : null)));
+    if (!all.length) {
       main.appendChild(h('section', { class: 'card' }, h('p', null, '정리할 일지가 없습니다. 「시험일지 입력」에서 일지를 적거나, 지금 쓰는 정리 엑셀을 「현황 데이터 → 엑셀·CSV 불러오기」로 넣어 주세요.'),
         h('div', { class: 'btn-row' }, h('a', { class: 'btn btn-primary', href: '#/tpr' }, '시험일지 입력'), importButton(false), sampleButton(false))));
       return;
     }
+
+    // 1. 기간·보기 조건
+    function setKind(k) { sv.kind = k; save(); render(); }
+    var kindBtns = L.VIEW_KINDS.map(function (k) {
+      var extra = k[0] === 'month' ? L.viewPeriod('month', today()) : k[0] === 'closing' ? L.viewPeriod('closing', today(), holidays()) : null;
+      return h('button', { type: 'button', class: 'btn btn-sm' + (sv.kind === k[0] ? ' on' : ''), 'aria-pressed': sv.kind === k[0] ? 'true' : 'false', onclick: function () { setKind(k[0]); } },
+        k[1] + (extra ? ' (' + extra.from.slice(5) + ' ~ ' + extra.to.slice(5) + ')' : ''));
+    });
+    var cFrom = h('input', { type: 'date', name: 'viewFrom', value: sv.kind === 'custom' ? sv.from : P.from });
+    var cTo = h('input', { type: 'date', name: 'viewTo', value: sv.kind === 'custom' ? sv.to : P.to });
+    [cFrom, cTo].forEach(function (el) { el.addEventListener('change', function () { sv.kind = 'custom'; sv.from = cFrom.value; sv.to = cTo.value; save(); render(); }); });
+    var cbActive = h('input', { type: 'checkbox', name: 'onlyActive', checked: sv.onlyActive !== false });
+    cbActive.addEventListener('change', function () { sv.onlyActive = cbActive.checked; save(); render(); });
+    var cbArch = h('input', { type: 'checkbox', name: 'showArchived', checked: showArchived() });
+    cbArch.addEventListener('change', function () { settings().showArchived = cbArch.checked; save(); render(); });
+    var countLine = '등록된 모델 ' + fu.total + '개 중 ' + fu.shown + '개를 보고 있습니다' +
+      (fu.hiddenInactive ? ' · 이 기간 일지가 없어 숨긴 모델 ' + fu.hiddenInactive + '개' : '') +
+      (fu.hiddenArchived ? ' · 사용 종료로 숨긴 모델 ' + fu.hiddenArchived + '개' : '') + '.';
+    main.appendChild(h('section', { class: 'card' }, h('h2', null, '모델 목록 보기'),
+      h('div', { class: 'btn-row', role: 'group', 'aria-label': '조회 기간' }, kindBtns),
+      h('div', { class: 'form-grid three', style: 'margin-top:10px' }, field('시작일', cFrom), field('종료일', cTo)),
+      h('div', { class: 'btn-row', style: 'margin-top:6px' },
+        h('label', { class: 'check' }, cbActive, '기간 안에 일지가 있는 모델만'),
+        h('label', { class: 'check' }, cbArch, '사용 종료 모델도 보기')),
+      h('p', { class: 'note', 'data-role': 'unit-count' }, '조회 기간: ' + perLabel + '. ' + countLine),
+      h('p', { class: 'note' }, '일지가 아직 하나도 없는 새 모델은 기간과 상관없이 보입니다. 시험이 끝난 모델은 「사용 종료」로 두면 일지 입력·현황 데이터·대시보드의 모델 목록에서 빠집니다. 일지와 기성 청구는 그대로 남습니다.')));
+
+    if (!us.length) {
+      main.appendChild(h('section', { class: 'card' }, h('p', null, '이 조건에 맞는 모델이 없습니다. 기간을 넓히거나 아래 버튼으로 전체를 보세요.'),
+        h('div', { class: 'btn-row' },
+          h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { sv.kind = 'all'; save(); render(); } }, '전체 기간으로 보기'),
+          fu.hiddenArchived ? h('button', { type: 'button', class: 'btn', onclick: function () { settings().showArchived = true; save(); render(); } }, '사용 종료 모델도 보기') : null)));
+      return;
+    }
     if (!sumKey || !us.some(function (u) { return u.key === sumKey; })) sumKey = us[0].key;
+
+    // 2. 모델 목록(기간 안 활동)
+    var mt = h('tbody');
+    us.forEach(function (x) {
+      var a = x.activity;
+      var cumAll = L.unitSummary(db.rows, x, P.to ? { to: P.to } : {}).totals.hours;
+      var state = x.archived ? h('span', { class: 'badge warn' }, '사용 종료') : x.fresh ? h('span', { class: 'badge' }, '새 모델') : h('span', { class: 'badge ok' }, '사용 중');
+      mt.appendChild(h('tr', { class: 'clickable' + (x.key === sumKey ? ' current' : ''), tabindex: '0', 'aria-current': x.key === sumKey ? 'true' : null,
+        onclick: function () { sumKey = x.key; render(); }, onkeydown: function (e) { if (e.key === 'Enter') { sumKey = x.key; render(); } } },
+        h('td', null, x.label), h('td', null, state), h('td', { class: 'num' }, String(a.logs)), h('td', { class: 'num' }, L.fmtNum(a.hours)),
+        h('td', { class: 'num' }, String(a.issues)), h('td', { class: 'num' }, L.fmtNum(cumAll) + ' / ' + L.fmtNum(x.targetHours)),
+        h('td', { class: 'num' }, a.last || '-'),
+        h('td', null, h('button', { type: 'button', class: 'btn btn-sm', onclick: function (e) { e.stopPropagation(); setArchived(x, !x.archived); } }, x.archived ? '다시 사용' : '사용 종료'))));
+    });
+    main.appendChild(h('section', { class: 'card' }, h('h2', null, '모델 ' + us.length + '개 (' + perLabel + ')'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'list' },
+        h('thead', null, h('tr', null, ['모델/호기', '상태', '기간 일지(장)', '기간 가동(h)', '기간 문제점(건)', '누적/목표(h)', '마지막 일지', ''].map(function (c) { return h('th', null, c); }))), mt))));
+
+    // 3. 고른 모델 정리표
     var u = us.find(function (x) { return x.key === sumKey; });
-    var sel = select('unit', us.map(function (x) { return [x.key, x.label]; }), sumKey, { 'aria-label': '모델/호기' });
+    var sel = select('unit', us.map(function (x) { return [x.key, x.label + (x.archived ? ' (사용 종료)' : '')]; }), sumKey, { 'aria-label': '모델/호기' });
     sel.addEventListener('change', function () { sumKey = sel.value; render(); });
-    var sum = L.unitSummary(db.rows, u);
+    var sum = L.unitSummary(db.rows, u, perOpt);
     var t = sum.totals;
+    var pt = sum.period ? sum.period.totals : t;
+    var lines = sum.period ? sum.period.lines : sum.lines;
     var fuel = u.fuel && u.fuel !== L.ELECTRIC ? u.fuel : '경유';
     main.appendChild(h('section', { class: 'card' },
       h('div', { class: 'filters' }, field('모델명/호기', sel)),
+      u.archived ? h('div', { class: 'alert warn' }, '사용 종료로 둔 모델입니다. 일지 입력 목록에서 빠져 있습니다. ', h('button', { type: 'button', class: 'linkish', onclick: function () { setArchived(u, false); } }, '다시 사용')) : null,
       h('dl', { class: 'master' },
         h('div', null, h('dt', null, '초기 아워미터'), h('dd', null, u.initialHour == null ? '미입력' : L.fmtNum(u.initialHour) + ' hr')),
         h('div', null, h('dt', null, '목표 가동시간'), h('dd', null, L.fmtNum(u.targetHours) + ' hr' + (u.extended ? ' (특화 +500)' : '') + (u.targetDefault ? ' · 기본값' : ''))),
@@ -926,29 +1012,35 @@
         h('div', null, h('dt', null, '과제번호'), h('dd', null, u.project || '-')),
         h('div', null, h('dt', null, '연료'), h('dd', null, u.fuel || '-'))),
       h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onclick: function () { editMaster(u); } }, '모델 정보 고치기'),
+        h('button', { type: 'button', class: 'btn', onclick: function () { setArchived(u, !u.archived); } }, u.archived ? '다시 사용' : '사용 종료'),
         h('button', { type: 'button', class: 'btn btn-primary', onclick: function () {
-          var n = {}; n[u.label.replace(/[\[\]:*?\/\\]/g, '_').slice(0, 31) || '정리'] = L.summarySheet(sum);
-          writeXlsx('시험일지정리_' + u.label.replace(/[\\\/:*?"<>|\s]+/g, '_') + tag() + '_' + today() + '.xlsx', n);
-        } }, '이 모델 정리 엑셀 내려받기'))));
+          var n = {}; n[sheetName(u.label, {}, '정리')] = L.summarySheet(sum, { periodOnly: P.kind !== 'all' });
+          writeXlsx('시험일지정리_' + u.label.replace(/[\\\/:*?"<>|\s]+/g, '_') + (P.kind === 'all' ? '' : '_' + (P.from || '처음') + '_' + (P.to || '끝')) + tag() + '_' + today() + '.xlsx', n);
+        } }, P.kind === 'all' ? '이 모델 정리 엑셀 내려받기' : '이 모델 기간 정리 엑셀 내려받기'))));
     function kpi(k, v, unit) { return h('div', { class: 'kpi' }, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v, unit ? h('small', null, unit) : null)); }
+    var asOf = sum.asOf ? ' (' + sum.asOf.slice(5) + ' 기준)' : '';
     main.appendChild(h('div', { class: 'kpis' },
-      kpi('누적 가동시간', L.fmtNum(t.hours), 'hr'), kpi('누적 Ratio', sum.ratio == null ? '-' : L.fmtNum(sum.ratio * 100), sum.ratio == null ? '목표 미입력' : '%'),
+      P.kind === 'all' ? null : kpi('기간 가동시간', L.fmtNum(pt.hours), 'hr'),
+      P.kind === 'all' ? null : kpi('기간 일지', String(pt.logs), '장'),
+      kpi('누적 가동시간' + asOf, L.fmtNum(t.hours), 'hr'), kpi('누적 Ratio', sum.ratio == null ? '-' : L.fmtNum(sum.ratio * 100), sum.ratio == null ? '목표 미입력' : '%'),
       kpi('누적 아워미터', sum.meter == null ? '-' : L.fmtNum(sum.meter), sum.meter == null ? '초기값 미입력' : 'hr'),
-      kpi(fuel + ' 합계', L.fmtNum(t.fuel[fuel] || 0), L.fuelUnit(fuel)), kpi('요소수 합계', L.fmtNum(t.urea), 'L'), kpi('문제점 기록', String(t.issues), '건')));
+      kpi(fuel + (P.kind === 'all' ? ' 합계' : ' (기간)'), L.fmtNum(pt.fuel[fuel] || 0), L.fuelUnit(fuel)), kpi('요소수' + (P.kind === 'all' ? ' 합계' : ' (기간)'), L.fmtNum(pt.urea), 'L'),
+      kpi('문제점' + (P.kind === 'all' ? ' 기록' : ' (기간)'), String(pt.issues), '건')));
     var cols = ['Date', '주/야/휴', '일 가동시간', '기본/요철 사이클', '누적 가동시간', '누적 아워미터', '기본 사이클', '요철 사이클', '장비 점검 및 TPR', '특화(배터리 점검+수리)', '히터', '에어컨', fuel === 'LPG' ? 'LPG(kg)' : '경유 주입량', '요소수', '날씨', '운전자 Code', '문제점 / 조치내용'];
     var tb = h('tbody');
     var byId = {};
     db.rows.forEach(function (r) { byId[r.id] = r; });
-    sum.lines.slice().reverse().forEach(function (l) {
+    lines.slice().reverse().forEach(function (l) {
       function n(v) { return h('td', { class: 'num' }, v == null ? '' : L.fmtNum(v)); }
       var r = byId[l.id];
       tb.appendChild(h('tr', { class: 'clickable', tabindex: '0', onclick: function () { openTpr(r); }, onkeydown: function (e) { if (e.key === 'Enter') openTpr(r); } },
         h('td', { class: 'num' }, l.date), h('td', null, l.shift), n(l.hours), n(l.cycle_h), n(l.cum), n(l.meter), n(l.basic), n(l.bump), n(l.inspect), n(l.special), n(l.heater), n(l.ac),
         n(l.fuel === fuel ? l.fuel_qty : null), n(l.urea), h('td', null, l.weather), h('td', null, l.driver), h('td', { class: 'wide' }, l.issue)));
     });
-    main.appendChild(h('section', { class: 'card' }, h('h2', null, '일자별 정리표 (' + u.label + ')'),
-      h('p', { class: 'note' }, '누적 가동시간 = 일 가동시간을 일자·주/야/휴 순으로 더한 값, 누적 아워미터 = 초기 아워미터 + 누적 가동시간입니다. 최근 일지가 위에 오고, 줄을 누르면 일지 양식으로 고칩니다. 엑셀은 원래 정리 엑셀처럼 오래된 날짜부터 적습니다.'),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'list' }, h('thead', null, h('tr', null, cols.map(function (c) { return h('th', null, c); }))), tb))));
+    main.appendChild(h('section', { class: 'card' }, h('h2', null, '일자별 정리표 (' + u.label + ' · ' + perLabel + ')'),
+      h('p', { class: 'note' }, '누적 가동시간 = 일 가동시간을 일자·주/야/휴 순으로 시험 시작부터 더한 값, 누적 아워미터 = 초기 아워미터 + 누적 가동시간입니다. 기간을 골라도 누적은 시험 시작부터 센 값 그대로이고, 표에는 그 기간의 일지만 보입니다. 최근 일지가 위에 오고, 줄을 누르면 일지 양식으로 고칩니다.'),
+      lines.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'list' }, h('thead', null, h('tr', null, cols.map(function (c) { return h('th', null, c); }))), tb))
+        : h('p', null, '이 기간에 적은 일지가 없습니다.')));
   }
   function editMaster(u) {
     var isNew = !u;
@@ -958,6 +1050,7 @@
       unit_no: h('input', { type: 'text', name: 'unit_no', value: m.unit_no, readonly: !isNew && L.rowsOfUnit(db.rows, u.key).length ? true : null }),
       initialHour: numIn('initialHour', m.initialHour), targetHours: numIn('targetHours', m.targetDefault ? '' : m.targetHours, { placeholder: '비우면 1000 (특화 +500 = 1500)' }),
       extended: h('input', { type: 'checkbox', name: 'extended', checked: !!m.extended }),
+      archived: h('input', { type: 'checkbox', name: 'archived', checked: !!m.archived }),
       pg: h('input', { type: 'text', name: 'pg', value: m.pg }), project: h('input', { type: 'text', name: 'project', value: m.project }),
       fuel: select('fuel', [['', '(모름)'], '경유', 'LPG', '전기'], m.fuel)
     };
@@ -968,12 +1061,13 @@
         field('초기 아워미터(hr)', inputs.initialHour, '시험 시작 때 아워미터'), field('목표 가동시간(hr)', inputs.targetHours, '보통 1000시간. 다른 값일 때만 적어 주세요'),
         h('label', { class: 'check span-all' }, inputs.extended, '특화 시험 모델(+500시간 → 목표 1500시간)'),
         field('PG 정보', inputs.pg), field('과제번호', inputs.project, '기성 청구서 「과제번호」 칸'),
-        field('연료', inputs.fuel, '연료 칸이 빈 일지는 이 연료로 정산합니다'))
+        field('연료', inputs.fuel, '연료 칸이 빈 일지는 이 연료로 정산합니다'),
+        h('label', { class: 'check span-all' }, inputs.archived, '사용 종료(시험이 끝난 모델 — 일지 입력·필터 목록에서 뺍니다. 일지와 청구는 그대로)'))
     ], [
       !isNew && !L.rowsOfUnit(db.rows, u.key).length ? h('button', { type: 'button', class: 'btn btn-danger', onclick: function () { delete db.masters[u.key]; save(); closeDialog(); render(); } }, '모델 지우기') : null,
       h('button', { type: 'button', class: 'btn', onclick: closeDialog }, '취소'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: function () {
-        var raw = { model: inputs.model.value.trim(), unit_no: inputs.unit_no.value.trim(), initialHour: inputs.initialHour.value.trim(), targetHours: inputs.targetHours.value.trim(), extended: inputs.extended.checked, pg: inputs.pg.value.trim(), project: inputs.project.value.trim(), fuel: inputs.fuel.value };
+        var raw = { model: inputs.model.value.trim(), unit_no: inputs.unit_no.value.trim(), initialHour: inputs.initialHour.value.trim(), targetHours: inputs.targetHours.value.trim(), extended: inputs.extended.checked, pg: inputs.pg.value.trim(), project: inputs.project.value.trim(), fuel: inputs.fuel.value, archived: inputs.archived.checked };
         var nm = L.normMaster(raw);
         if (!nm.model) { toast('모델명을 적어 주세요', true); return; }
         if (inputs.initialHour.value.trim() && nm.initialHour == null) { toast('초기 아워미터를 숫자로 적어 주세요', true); return; }
@@ -981,7 +1075,7 @@
         db.masters = db.masters || {};
         if (!isNew && u.key !== L.masterKey(nm.model, nm.unit_no)) delete db.masters[u.key];
         // 목표를 비우면 저장도 빈 값으로 둡니다(나중에 특화 표시를 바꾸면 1000 ↔ 1500 이 따라 바뀌게)
-        db.masters[L.masterKey(nm.model, nm.unit_no)] = { model: nm.model, unit_no: nm.unit_no, initialHour: nm.initialHour, targetHours: nm.targetDefault ? null : nm.targetHours, extended: nm.extended, pg: nm.pg, project: nm.project, fuel: nm.fuel };
+        db.masters[L.masterKey(nm.model, nm.unit_no)] = { model: nm.model, unit_no: nm.unit_no, initialHour: nm.initialHour, targetHours: nm.targetDefault ? null : nm.targetHours, extended: nm.extended, pg: nm.pg, project: nm.project, fuel: nm.fuel, archived: nm.archived };
         sumKey = L.masterKey(nm.model, nm.unit_no);
         save(); closeDialog(); toast('모델 정보를 저장했습니다'); render();
       } }, '저장')
@@ -1350,7 +1444,7 @@
     }
     var fFrom = h('input', { type: 'date', name: 'from', value: dash.from });
     var fTo = h('input', { type: 'date', name: 'to', value: dash.to });
-    var fModel = select('model', [['', '전체']].concat(L.models(db.rows)), dash.model);
+    var fModel = select('model', [['', '전체']].concat(pickerModelsFor(dash.model)), dash.model);
     var fWk = h('input', { type: 'checkbox', name: 'skipWeekend', checked: dash.skipWeekend });
     [fFrom, fTo, fModel, fWk].forEach(function (el) {
       el.addEventListener('change', function () { dash.from = fFrom.value; dash.to = fTo.value; dash.model = fModel.value; dash.skipWeekend = fWk.checked; render(); });

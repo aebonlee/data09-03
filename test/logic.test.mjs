@@ -807,4 +807,87 @@ test('배터리 구간 이름 「지게차 충전(정심)」 → 「(점심)」,
   assert.equal(L.rowToTpr({ battery: [{}, {}, { label: '지게차 충전(정심)', start: 41, end: 84 }] }).battery[2].label, '지게차 충전(점심)');
 });
 
+console.log('\n모델 목록 기간 보기·사용 종료 (2026-09-30 수강생 요청)');
+{
+  const R = [
+    row({ date: '2026-08-10', model: 'OLD', unit_no: '#1', driver: 'a', run_hours: 8, issue: '누유' }),
+    row({ date: '2026-08-11', model: 'OLD', unit_no: '#1', driver: 'a', run_hours: 7 }),
+    row({ date: '2026-09-02', model: 'NEW', unit_no: '#1', driver: 'b', run_hours: 6, fuel_type: '경유', fuel_qty: 10 }),
+    row({ date: '2026-09-20', model: 'NEW', unit_no: '#1', driver: 'b', run_hours: 5.5, issue: '소음', fuel_type: '경유', fuel_qty: 12 }),
+    row({ date: '2026-08-30', model: 'NEW', unit_no: '#1', driver: 'b', run_hours: 4 }),
+    row({ date: '2026-09-05', model: 'MID', unit_no: '', driver: 'c', run_hours: 3 })
+  ];
+  const M = {
+    'OLD|#1': { model: 'OLD', unit_no: '#1', archived: true },
+    'MID|': { model: 'MID', unit_no: '' },
+    'FRESH|#2': { model: 'FRESH', unit_no: '#2' } // 등록만 하고 일지 없음
+  };
+  test('기간 종류: 이번 달·이번 기성 기간·직접(거꾸로면 뒤집음)·전체', () => {
+    assert.deepEqual(L.viewPeriod('month', '2026-09-30'), { kind: 'month', from: '2026-09-01', to: '2026-09-30' });
+    assert.deepEqual(L.monthRange('2028-02-10'), { from: '2028-02-01', to: '2028-02-29' }); // 윤년
+    // 2026-09 마감일 = 09-30(수), 8월 마감 = 08-31(월) → 09-01 ~ 09-30
+    assert.deepEqual(L.viewPeriod('closing', '2026-09-15', {}), { kind: 'closing', from: '2026-09-01', to: '2026-09-30' });
+    assert.deepEqual(L.viewPeriod('custom', '2026-09-30', {}, { from: '2026-09-10', to: '2026-08-01' }), { kind: 'custom', from: '2026-08-01', to: '2026-09-10' });
+    assert.deepEqual(L.viewPeriod('all', '2026-09-30'), { kind: 'all', from: '', to: '' });
+  });
+  test('기본: 기간 안 일지가 있는 모델 + 새 모델만, 사용 종료는 숨김 — 개수가 맞음', () => {
+    const us = L.unitList(R, M);
+    assert.equal(us.length, 4);
+    assert.equal(us.find(u => u.key === 'OLD|#1').archived, true);
+    const f = L.filterUnits(R, us, { from: '2026-09-01', to: '2026-09-30' });
+    assert.deepEqual(f.list.map(u => u.key), ['FRESH|#2', 'MID|', 'NEW|#1']);
+    assert.equal(f.hiddenArchived, 1); assert.equal(f.hiddenInactive, 0); assert.equal(f.fresh, 1);
+    assert.equal(f.shown + f.hiddenArchived + f.hiddenInactive, f.total);
+    const n = f.list.find(u => u.key === 'NEW|#1').activity;
+    // 9월 NEW: 6 + 5.5 = 11.5h, 2장, 문제점 1 (08-30 은 기간 밖), 전체 일지 3장
+    assert.deepEqual([n.logs, n.hours, n.issues, n.first, n.last, n.all], [2, 11.5, 1, '2026-09-02', '2026-09-20', 3]);
+  });
+  test('8월로 보면 MID 는 기간 일지가 없어 숨김, 사용 종료도 보기면 OLD 가 나옴', () => {
+    const us = L.unitList(R, M);
+    const f = L.filterUnits(R, us, { from: '2026-08-01', to: '2026-08-31' });
+    assert.deepEqual(f.list.map(u => u.key), ['FRESH|#2', 'NEW|#1']);
+    assert.equal(f.hiddenInactive, 1); assert.equal(f.hiddenArchived, 1);
+    const g = L.filterUnits(R, us, { from: '2026-08-01', to: '2026-08-31', showArchived: true });
+    assert.deepEqual(g.list.map(u => u.key), ['FRESH|#2', 'NEW|#1', 'OLD|#1']);
+    assert.equal(g.list.find(u => u.key === 'OLD|#1').activity.hours, 15);
+    assert.equal(g.shown + g.hiddenArchived + g.hiddenInactive, g.total);
+    // 기간 거르기를 끄면 사용 종료만 숨김
+    const h = L.filterUnits(R, us, { from: '2026-08-01', to: '2026-08-31', onlyActive: false });
+    assert.equal(h.shown, 3); assert.equal(h.hiddenInactive, 0);
+    // 전체 기간
+    assert.equal(L.filterUnits(R, us, {}).shown, 3);
+  });
+  test('고르는 목록: 모든 호기가 사용 종료인 모델명은 빠짐', () => {
+    assert.deepEqual(L.pickerModels(R, M, false), ['FRESH', 'MID', 'NEW']);
+    assert.deepEqual(L.pickerModels(R, M, true), ['FRESH', 'MID', 'NEW', 'OLD']);
+    // 같은 모델의 다른 호기가 살아 있으면 모델명은 남음
+    assert.deepEqual(L.pickerModels(R, Object.assign({}, M, { 'OLD|#2': { model: 'OLD', unit_no: '#2' } }), false), ['FRESH', 'MID', 'NEW', 'OLD']);
+  });
+  test('정리표 기간 보기: 누적은 시험 시작부터, 기간 합계·행은 기간만', () => {
+    const u = L.unitList(R, M).find(x => x.key === 'NEW|#1');
+    const s = L.unitSummary(R, u, { from: '2026-09-01', to: '2026-09-30' });
+    assert.equal(s.totals.hours, 15.5); // 4 + 6 + 5.5 (08-30 포함)
+    assert.equal(s.period.totals.hours, 11.5);
+    assert.equal(s.period.totals.logs, 2);
+    assert.equal(s.period.totals.fuel['경유'], 22);
+    assert.deepEqual(s.period.lines.map(l => [l.date, l.cum]), [['2026-09-02', 10], ['2026-09-20', 15.5]]);
+    // 엑셀: 5번째 줄에 기간, 6번째 줄 머리 아래는 기간 행만
+    const aoa = L.summarySheet(s, { periodOnly: true });
+    assert.deepEqual(aoa[4].slice(0, 4), ['조회 기간', '2026-09-01 ~ 2026-09-30', '기간 가동시간(h)', 11.5]);
+    assert.equal(aoa.length, 6 + 2);
+    assert.equal(L.summarySheet(s).length, 6 + 3);
+    // from 없으면 period 없음(기존 동작 그대로)
+    assert.equal(L.unitSummary(R, u).period, null);
+  });
+  test('사용 종료 표시는 저장·읽기에서 유지되고, 주간 보고는 그 주 일지가 없으면 뺌', () => {
+    assert.equal(L.normMaster({ model: 'X', archived: true }).archived, true);
+    assert.equal(L.normMaster({ model: 'X' }).archived, false);
+    const rep = L.weeklyReport(R, M, '2026-09-20', 7);
+    assert.ok(!rep.models.some(m => m.model === 'OLD'));
+    // 사용 종료라도 그 주에 일지가 있으면 보고에 남음
+    const rep2 = L.weeklyReport(R, M, '2026-08-11', 7);
+    assert.ok(rep2.models.some(m => m.model === 'OLD'));
+  });
+}
+
 console.log('\n' + passed + '개 통과' + (process.exitCode ? ' · 실패 있음' : ''));

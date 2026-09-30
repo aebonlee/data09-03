@@ -157,6 +157,9 @@ begin
   insert into public.unit_masters (model, unit_no, extended) values ('MODEL-Z', '', true);
   perform public._assert((select extended and target_hours is null from public.unit_masters where model = 'MODEL-Z'),
     '특화 모델은 목표를 비워 두고 extended 로 표시할 수 있다');
+  perform public._assert((select not archived from public.unit_masters where model = 'MODEL-Z'), '사용 종료 표시는 기본 false');
+  update public.unit_masters set archived = true where model = 'MODEL-Z';
+  perform public._assert((select archived from public.unit_masters where model = 'MODEL-Z'), '사용 종료로 둘 수 있다(2026-09-30)');
 
   v_raised := false;
   begin insert into public.period_fuel_prices (period_from, period_to, fuel) values ('2025-05-30', '2025-04-30', '경유');

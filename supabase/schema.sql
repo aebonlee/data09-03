@@ -145,6 +145,9 @@ create table if not exists public.unit_masters (
 -- 2026-09-29 오후 수강생 답: 목표는 보통 1000h, 특화하면 +500h(1500h). target_hours 가 비면 도구가 extended 로 1000/1500 을 정한다
 alter table public.unit_masters add column if not exists extended boolean not null default false;
 
+-- 2026-09-30 수강생 요청: 시험이 끝난 모델을 「사용 종료」로 두면 고르는 목록에서 빠진다(일지·청구는 그대로)
+alter table public.unit_masters add column if not exists archived boolean not null default false;
+
 -- 기성 기간별 연료 단가 — 청구 기간이 달력 월과 다르므로(예: 04.30~05.30) 시작·종료일로 묶는다
 create table if not exists public.period_fuel_prices (
   id          bigint generated always as identity primary key,

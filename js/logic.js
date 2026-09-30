@@ -838,7 +838,9 @@
       extended: extended,
       pg: String(m.pg == null ? '' : m.pg).trim(),
       project: String(m.project == null ? '' : m.project).trim(),
-      fuel: m.fuel ? normFuel(m.fuel) : ''
+      fuel: m.fuel ? normFuel(m.fuel) : '',
+      // 사용 종료(수강생 요청 09-30): 시험이 끝난 모델을 고르는 목록에서 뺍니다. 일지·청구는 그대로 남습니다.
+      archived: m.archived === true || m.archived === 'true'
     };
   }
   // 일지에 나오는 모델·호기와 등록된 모델 정보를 합친 목록(이름순)
@@ -878,6 +880,73 @@
     return out.model ? out : null;
   }
 
+  // ── 모델 목록 기간 보기·사용 종료(수강생 요청 09-30) ─────────────
+  // 「모델이 계속 누적되면 엄청 많아질 텐데 기간을 구분해서 볼 수 있으면」
+  // kind: 'month'(이번 달 1일~말일) · 'closing'(지금 쌓이는 기성 기간) · 'custom'(직접) · 'all'(전체)
+  var VIEW_KINDS = [['month', '이번 달'], ['closing', '이번 기성 기간'], ['custom', '직접 입력'], ['all', '전체 기간']];
+  function monthRange(date) {
+    var ym = monthOf(date), p = ym.split('-');
+    var last = new Date(+p[0], +p[1], 0).getDate();
+    return { from: ym + '-01', to: ym + '-' + pad(last) };
+  }
+  function viewPeriod(kind, today, hol, custom) {
+    if (kind === 'all') return { kind: 'all', from: '', to: '' };
+    if (kind === 'closing') { var c = openClosingPeriod(today, hol); return { kind: 'closing', from: c.from, to: c.to }; }
+    if (kind === 'custom') {
+      custom = custom || {};
+      var f = parseDate(custom.from) || '', t = parseDate(custom.to) || '';
+      if (f && t && f > t) { var x = f; f = t; t = x; }
+      return { kind: 'custom', from: f, to: t };
+    }
+    var m = monthRange(today);
+    return { kind: 'month', from: m.from, to: m.to };
+  }
+  function inPeriod(date, from, to) { return !!date && (!from || date >= from) && (!to || date <= to); }
+  // 모델·호기마다 기간 안 일지 수·가동시간·문제점, 그리고 전체 일지 수
+  function unitActivity(rows, from, to) {
+    var out = {};
+    rows.forEach(function (r) {
+      if (!r.model || !r.date) return;
+      var k = masterKey(r.model, r.unit_no);
+      var a = out[k] = out[k] || { all: 0, logs: 0, hours: 0, issues: 0, first: '', last: '' };
+      a.all++;
+      if (!inPeriod(r.date, from, to)) return;
+      var h = effectiveHours(r);
+      a.logs++;
+      if (h > 0) a.hours = r2(a.hours + h);
+      if (r.issue) a.issues++;
+      if (!a.first || r.date < a.first) a.first = r.date;
+      if (r.date > a.last) a.last = r.date;
+    });
+    return out;
+  }
+  // 목록 거르기. opt: { from, to, onlyActive(기본 true), showArchived(기본 false) }
+  // 보이는 조건: 사용 종료가 아니고(또는 사용 종료도 보기), 기간 안에 일지가 있거나 아직 일지가 하나도 없는 새 모델.
+  // 개수: shown + hiddenArchived + hiddenInactive = total 이 항상 맞습니다.
+  function filterUnits(rows, units, opt) {
+    opt = opt || {};
+    var onlyActive = opt.onlyActive !== false;
+    var act = unitActivity(rows, opt.from, opt.to);
+    var res = { list: [], total: units.length, archived: 0, hiddenArchived: 0, hiddenInactive: 0, fresh: 0 };
+    units.forEach(function (u) {
+      var a = act[u.key] || { all: 0, logs: 0, hours: 0, issues: 0, first: '', last: '' };
+      if (u.archived) res.archived++;
+      if (u.archived && !opt.showArchived) { res.hiddenArchived++; return; }
+      var fresh = a.all === 0;
+      if (onlyActive && !a.logs && !fresh) { res.hiddenInactive++; return; }
+      if (fresh) res.fresh++;
+      res.list.push(Object.assign({}, u, { activity: a, fresh: fresh }));
+    });
+    res.shown = res.list.length;
+    return res;
+  }
+  // 입력·필터에서 고르는 모델명 목록: 모든 호기가 사용 종료인 모델은 뺍니다(showArchived 면 전부).
+  function pickerModels(rows, masters, showArchived) {
+    var live = {}, all = {};
+    unitList(rows, masters).forEach(function (u) { all[u.model] = true; if (!u.archived) live[u.model] = true; });
+    return Object.keys(showArchived ? all : live).sort();
+  }
+
   // ── 시험일지 정리표(모델별 누적) ─────────────────────────────
   // 일자·주/야/휴 순으로 늘어놓고 누적 가동시간과 누적 아워미터(초기 아워미터 + 누적 가동시간)를 계산합니다.
   // 청구서의 「금월」과 같게 하려고 가동시간이 0 인 날(입고 점검 등)도 행은 남깁니다.
@@ -887,23 +956,35 @@
     var key = masterKey(master.model, master.unit_no);
     var list = sortLogs(rowsOfUnit(rows, key).filter(function (r) { return r.date && (!opt.to || r.date <= opt.to); }));
     var cum = 0;
-    var t = { hours: 0, basic: 0, bump: 0, inspect: 0, special: 0, heater: 0, ac: 0, fuel: {}, urea: 0, issues: 0, logs: 0 };
-    FUELS.forEach(function (f) { t.fuel[f.key] = 0; });
+    function blank() {
+      var o = { hours: 0, basic: 0, bump: 0, inspect: 0, special: 0, heater: 0, ac: 0, fuel: {}, urea: 0, issues: 0, logs: 0 };
+      FUELS.forEach(function (f) { o.fuel[f.key] = 0; });
+      return o;
+    }
+    function acc(o, r, h, fuel) {
+      o.logs++;
+      o.hours = r2(o.hours + (h > 0 ? h : 0));
+      o.basic = r2(o.basic + (r.basic_cycles || 0));
+      o.bump = r2(o.bump + (r.bump_cycles || 0));
+      o.inspect = r2(o.inspect + (r.inspect_h || 0));
+      o.special = r2(o.special + (r.special_h || 0) + (r.battery_check_h || 0));
+      o.heater = r2(o.heater + (r.heater_h || 0));
+      o.ac = r2(o.ac + (r.ac_h || 0));
+      if (r.fuel_qty > 0 && o.fuel[fuel] != null) o.fuel[fuel] = r2(o.fuel[fuel] + r.fuel_qty);
+      if (r.urea_l > 0) o.urea = r2(o.urea + r.urea_l);
+      if (r.issue) o.issues++;
+    }
+    var t = blank();
+    // opt.from 이 있으면 그 날부터 opt.to 까지를 「조회 기간」으로 따로 합칩니다.
+    // 누적 가동시간·아워미터는 기간과 상관없이 시험 시작부터 센 값 그대로입니다(기간만 잘라 보면 누적이 틀어지므로).
+    var p = opt.from ? blank() : null;
     var lines = list.map(function (r) {
       var h = effectiveHours(r);
       cum = r2(cum + (h > 0 ? h : 0));
       var fuel = r.fuel_type || master.fuel;
-      t.logs++;
+      acc(t, r, h, fuel);
       t.hours = cum;
-      t.basic = r2(t.basic + (r.basic_cycles || 0));
-      t.bump = r2(t.bump + (r.bump_cycles || 0));
-      t.inspect = r2(t.inspect + (r.inspect_h || 0));
-      t.special = r2(t.special + (r.special_h || 0) + (r.battery_check_h || 0));
-      t.heater = r2(t.heater + (r.heater_h || 0));
-      t.ac = r2(t.ac + (r.ac_h || 0));
-      if (r.fuel_qty > 0 && t.fuel[fuel] != null) t.fuel[fuel] = r2(t.fuel[fuel] + r.fuel_qty);
-      if (r.urea_l > 0) t.urea = r2(t.urea + r.urea_l);
-      if (r.issue) t.issues++;
+      if (p && r.date >= opt.from) acc(p, r, h, fuel);
       return {
         id: r.id, date: r.date, shift: r.shift || '', hours: h, cycle_h: r.cycle_h, cum: cum,
         meter: master.initialHour != null ? r2(master.initialHour + cum) : null,
@@ -918,7 +999,8 @@
       master: master, key: key, label: modelLabel(master.model, master.unit_no), lines: lines, totals: t,
       asOf: lines.length ? lines[lines.length - 1].date : '',
       ratio: target > 0 ? t.hours / target : null,
-      meter: master.initialHour != null ? r2(master.initialHour + t.hours) : null
+      meter: master.initialHour != null ? r2(master.initialHour + t.hours) : null,
+      period: p ? { from: opt.from, to: opt.to || '', lines: lines.filter(function (l) { return l.date >= opt.from; }), totals: p } : null
     };
   }
   function pct(x, d) { return x == null ? '' : fmtNum(x * 100, d == null ? 1 : d) + '%'; }
@@ -927,20 +1009,22 @@
   var UREA = '요소수';
   var BILL_ITEMS = ['경유', 'LPG', UREA];
   // 정리표 엑셀: 위 4줄 머리 + 6번째 줄 열 이름 + 일자별 행 (수강생 엑셀 배치를 따름)
-  function summarySheet(sum) {
+  // opt.periodOnly: 조회 기간(sum.period)의 행만 적고, 5번째 줄에 기간과 기간 합계를 적습니다.
+  function summarySheet(sum, opt) {
     var m = sum.master, t = sum.totals;
+    var per = opt && opt.periodOnly && sum.period ? sum.period : null;
     var fuel = m.fuel && m.fuel !== ELECTRIC ? m.fuel : '경유';
     var aoa = [
       ['모델명/호기', m.model + (m.unit_no ? '/' + m.unit_no : ''), (sum.asOf ? sum.asOf.slice(5) : '') + ' 기준', '누적 가동시간(h)', t.hours],
       ['초기 아워미터(h)', m.initialHour == null ? '' : m.initialHour, '누적 Ratio', sum.ratio == null ? '' : Math.round(sum.ratio * 1000) / 10 + '%', '누적 아워미터(h)', sum.meter == null ? '' : sum.meter],
       ['목표 가동시간(h)', m.targetHours == null ? '' : m.targetHours, '남은 시간(h)', m.targetHours > 0 ? r2(Math.max(0, m.targetHours - t.hours)) : '', fuel + ' 합계(' + fuelUnit(fuel) + ')', t.fuel[fuel] || 0, '요소수 합계(L)', t.urea],
       ['PG 정보', m.pg, '과제번호', m.project, '기본 사이클 합계(회)', t.basic, '요철 사이클 합계(회)', t.bump],
-      [],
+      per ? ['조회 기간', per.from + ' ~ ' + (per.to || sum.asOf), '기간 가동시간(h)', per.totals.hours, '기간 일지(장)', per.totals.logs, '기간 문제점(건)', per.totals.issues] : [],
       ['Date', '주/야/휴', '일 가동시간', '기본/요철 사이클', '누적 가동시간', '누적 아워미터', '기본 사이클', '요철 사이클', '장비 점검 및 TPR 작성',
         '특회 장비 수리', '히터가동시간', '에어컨가동 시간', fuel === 'LPG' ? 'LPG 사용량(kg)' : '경유 주입량', '요소수 주입량', '날씨', '운전자 Code', '문제점 / 조치내용']
     ];
     function v(x) { return x == null ? '' : x; }
-    sum.lines.forEach(function (l) {
+    (per ? per.lines : sum.lines).forEach(function (l) {
       aoa.push([l.date, l.shift, v(l.hours), v(l.cycle_h), l.cum, v(l.meter), v(l.basic), v(l.bump), v(l.inspect), v(l.special), v(l.heater), v(l.ac),
         l.fuel === fuel ? v(l.fuel_qty) : '', v(l.urea), l.weather, l.driver, l.issue]);
     });
@@ -977,7 +1061,8 @@
         ratio: target > 0 ? cum / target : null, remaining: remaining, done: target > 0 && cum >= target,
         weekHours: week, weekIssues: weekIssues, weekLogs: weekLogs, totalIssues: total, lastDate: last, eta: eta
       };
-    }).filter(function (x) { return x.lastDate || x.target > 0; });
+      // 사용 종료 모델은 그 주에 일지가 있을 때만 보고에 넣습니다(수강생 요청 09-30)
+    }).filter(function (x, i) { return (x.lastDate || x.target > 0) && (!units[i].archived || x.weekLogs > 0); });
     return { asOf: asOf, from: from, days: days, models: list };
   }
   function shiftLabel(s) { return s === '주' ? '주간' : s === '야' ? '야간' : s === '휴' ? '휴일' : s || ''; }
@@ -1652,6 +1737,7 @@
     tprToRow: tprToRow, rowToTpr: rowToTpr, batteryUse: batteryUse, tprPrompt: tprPrompt, tprFromAi: tprFromAi,
     masterKey: masterKey, normMaster: normMaster, unitList: unitList, rowsOfUnit: rowsOfUnit, parseSummaryHeader: parseSummaryHeader,
     unitSummary: unitSummary, summarySheet: summarySheet,
+    VIEW_KINDS: VIEW_KINDS, monthRange: monthRange, viewPeriod: viewPeriod, unitActivity: unitActivity, filterUnits: filterUnits, pickerModels: pickerModels,
     weeklyReport: weeklyReport, weeklyMail: weeklyMail, progressSvg: progressSvg,
     hourBillingLines: hourBillingLines, calcHourBilling: calcHourBilling, hourBillingStatus: hourBillingStatus, hourBillingSheets: hourBillingSheets,
     fuelBillingLines: fuelBillingLines, calcFuelBilling: calcFuelBilling, lpgPriceOf: lpgPriceOf, fuelBillingSheets: fuelBillingSheets,
