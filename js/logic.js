@@ -39,6 +39,10 @@
     { key: 'fuel_type', label: '연료 종류', type: 'fuel', synonyms: ['연료종류', '연료 종류', '연료', '유종'] },
     { key: 'fuel_qty', label: '연료 소모량', type: 'number', synonyms: ['연료소모량', '연료 소모량', '소모량', '주유량', '급유량', '충전가스', '사용량', '경유 주입량', '경유주입량', '연료 주입량', '가스 사용량'] },
     { key: 'urea_l', label: '요소수 주입량(L)', type: 'number', synonyms: ['요소수 주입량', '요소수주입량', '요소수'] },
+    // 2026-09-30 수강생 답: 「경유와 요소수는 오피넷의 월 평균 단가를 사용하지 않고 주입 시 주유소 카드 결재 금액으로 처리」
+    // — 리터당 단가가 아니라 주입할 때 확정된 결제 금액(VAT 포함)을 일지에 바로 적습니다. LPG 는 사용량만 적습니다.
+    { key: 'fuel_won', label: '경유 결제 금액(원)', type: 'number', synonyms: ['경유 결제 금액', '경유결제금액', '경유 금액', '주유 금액', '주유금액', '결제 금액', '결제금액', '카드 결제 금액', '금액(원)'] },
+    { key: 'urea_won', label: '요소수 결제 금액(원)', type: 'number', synonyms: ['요소수 결제 금액', '요소수결제금액', '요소수 금액', '요소수금액'] },
     { key: 'issue', label: '문제점', type: 'text', synonyms: ['문제점', '문제점/조치내용', '문제점조치내용', '금일 발생 문제점/조치내용', '특이사항', '이슈', '비고', '고장내용', '불량내용'] },
     { key: 'photo', label: '사진 참조', type: 'text', synonyms: ['사진', '사진참조', '사진 참조', '이미지', '첨부'] }
   ];
@@ -296,6 +300,8 @@
       }
       if (row.shift && !SHIFT_ORDER[row.shift]) add(row, 'warn', 'shift', 'unknown_shift', '주/야/휴 칸의 「' + row.shift + '」 를 알아보지 못했습니다 — 기성 과급 계산에서 주간으로 봅니다');
       holidayWorkIssues(row, hol).forEach(function (i) { add(row, 'warn', 'shift', i.code, i.msg); });
+      if (row.dow) { var dwc = dateWeekdayCheck(row.date, row.dow); if (dwc.mismatch) add(row, 'warn', 'date', 'dow_mismatch', dwc.msg); }
+      if (row.fuel_won > 0 && row.fuel_type === 'LPG') add(row, 'warn', 'fuel_won', 'won_on_lpg', 'LPG 일지에 경유 결제 금액이 있습니다 — LPG 는 사용량만 적고 기성처리 때 월 평균 단가로 계산합니다');
       if (row.provisional) add(row, 'warn', 'run_hours', 'provisional', '마감 전 가입력(예상치)입니다 — 가동 후 확정 값으로 다시 저장해 주세요');
       if (Array.isArray(row.checks) && row.checks.some(function (c) { return c === '유'; }) && !row.issue) {
         add(row, 'warn', 'issue', 'check_without_issue', '일일 점검항목에 「유」가 있는데 문제점/조치내용이 비어 있습니다');
@@ -614,9 +620,9 @@
     '상부 의장품의 파손/변형/간섭/풀림/이음/진동 발생 여부'
   ];
   // 배터리 상태표기(시작 및 종료) 구간 — 양식의 기본 칸. 모델·시험마다 바꿔 적을 수 있습니다.
-  var BATTERY_SEGMENTS = ['기본/요철 (2hr)', '기본/요철 (1hr 50분)', '지게차 충전(정심)', '기본/요철 (2hr)', '기본/요철 (1hr 50분)', '기본/요철 (50분)', '배터리 충전 점검'];
+  var BATTERY_SEGMENTS = ['기본/요철 (2hr)', '기본/요철 (1hr 50분)', '지게차 충전(점심)', '기본/요철 (2hr)', '기본/요철 (1hr 50분)', '기본/요철 (50분)', '배터리 충전 점검'];
   // TPR 일지에만 있는 값(표준 열 밖) — 행을 고쳐도 지워지지 않게 이 목록으로 옮겨 담습니다
-  var EXTRA_KEYS = ['battery', 'problems', 'checks', 'coop', 'improve', 'wheel_nut', 'lpg_bottles', '_tpr', 'provisional', 'estimate', 'confirmed_at'];
+  var EXTRA_KEYS = ['battery', 'problems', 'checks', 'coop', 'improve', 'wheel_nut', 'lpg_bottles', '_tpr', 'provisional', 'estimate', 'confirmed_at', 'dow'];
 
   function normCheck(v) {
     var s = String(v == null ? '' : v).trim().toLowerCase();
@@ -649,6 +655,7 @@
     row.improve = String(form.improve == null ? '' : form.improve).trim();
     row.wheel_nut = normBool(form.wheel_nut);
     row.lpg_bottles = parseNum(form.lpg_bottles);
+    row.dow = normDow(form.dow);
     row._tpr = true;
     // LPG 를 통 수로만 적었으면 kg 으로 채웁니다
     if (row.fuel_qty == null && row.lpg_bottles > 0 && row.fuel_type === 'LPG') {
@@ -674,17 +681,20 @@
       : (row.issue ? [{ text: row.issue, note: '' }] : []);
     f.battery = BATTERY_SEGMENTS.map(function (label, i) {
       var b = (row.battery || [])[i];
-      return b ? { label: b.label || label, start: b.start == null ? '' : b.start, end: b.end == null ? '' : b.end } : { label: label, start: '', end: '' };
+      return b ? { label: fixSegLabel(b.label || label), start: b.start == null ? '' : b.start, end: b.end == null ? '' : b.end } : { label: label, start: '', end: '' };
     });
-    (row.battery || []).slice(BATTERY_SEGMENTS.length).forEach(function (b) { f.battery.push({ label: b.label, start: b.start == null ? '' : b.start, end: b.end == null ? '' : b.end }); });
+    (row.battery || []).slice(BATTERY_SEGMENTS.length).forEach(function (b) { f.battery.push({ label: fixSegLabel(b.label), start: b.start == null ? '' : b.start, end: b.end == null ? '' : b.end }); });
     f.checks = CHECK_ITEMS.map(function (_, i) { return (row.checks || [])[i] || ''; });
     f.coop = row.coop || '';
     f.improve = row.improve || '';
     f.wheel_nut = !!row.wheel_nut;
     f.lpg_bottles = row.lpg_bottles == null ? '' : row.lpg_bottles;
     f.provisional = !!row.provisional;
+    f.dow = row.dow || '';
     return f;
   }
+  // 09-30 수강생 지적 「지게차 충전(정심) → 지게차 충전(점심)」 — 이미 저장된 일지의 구간 이름도 고쳐 보여 줍니다
+  function fixSegLabel(label) { return String(label == null ? '' : label).replace('지게차 충전(정심)', '지게차 충전(점심)'); }
   // 배터리 소모 합계: 시작 > 종료 인 구간(방전)의 차이를 더합니다. 충전 구간(종료가 더 큼)은 뺍니다.
   function batteryUse(battery) {
     var use = 0, charge = 0;
@@ -702,9 +712,11 @@
       '손글씨를 읽어서 아래 JSON 형식 그대로만 답해줘. 설명 문장은 쓰지 말고 JSON 하나만 보내줘.',
       '읽을 수 없거나 빈 칸은 "" 로 두고, 숫자는 단위(h, 회, %) 없이 숫자만 적어줘.',
       '작성자 이름은 적지 말고 driver 는 "" 로 둬줘(개인정보라 사람이 직접 적습니다).',
+      '작성일은 옆에 적힌 요일과 맞는지 달력으로 확인해줘. 맞지 않으면(예: 1/3 을 1/30 으로 읽음) 요일에 맞는 날짜로 다시 읽어줘.',
       '',
       '{',
       '  "date": "YYYY-MM-DD (작성일)",',
+      '  "dow": "작성일 옆에 적힌 요일 한 글자 (월·화·수·목·금·토·일)",',
       '  "shift": "주 또는 야 또는 휴 (동그라미 친 것)",',
       '  "weather": "날씨",',
       '  "model": "모델명 (예: MODEL-X)",',
@@ -759,10 +771,52 @@
     form.coop = obj.coop || '';
     form.improve = obj.improve || '';
     form.wheel_nut = normBool(obj.wheel_nut);
+    form.dow = obj.dow == null ? '' : String(obj.dow);
+    var dc = dateWeekdayCheck(form.date, form.dow);
+    if (dc.mismatch) warnings.push(dc.msg);
     ['run_hours', 'hour_start', 'hour_end'].forEach(function (k) {
       if (form[k] !== undefined && form[k] !== '' && parseHours(form[k]) == null) warnings.push(FIELD[k].label + ' 「' + form[k] + '」 을 숫자로 읽지 못했습니다');
     });
     return { ok: true, form: form, warnings: warnings };
+  }
+
+  // ── 손글씨 날짜 ↔ 요일 대조 (수강생 제안 09-29: 「날짜를 1/3인데 1/30일로 인식 --> 요일도 적혀있는데 같이 병행하면」) ──
+  // TPR 작성일 옆에는 요일이 적혀 있어, 날짜 숫자를 잘못 읽으면 요일이 맞지 않습니다.
+  // 맞지 않으면 숫자를 잘못 읽었을 법한 날(한 자리 빠짐·더해짐·자리 바뀜) 가운데 요일이 맞는 날을 후보로 냅니다.
+  var DOW_KO = ['일', '월', '화', '수', '목', '금', '토'];
+  var DOW_EN = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  function normDow(v) {
+    var s = String(v == null ? '' : v).replace(/요일/g, '').replace(/[()\s（）]/g, '').toLowerCase();
+    if (!s) return '';
+    var i = DOW_KO.indexOf(s.charAt(0));
+    if (i < 0) i = DOW_EN.indexOf(s.slice(0, 3));
+    return i < 0 ? '' : DOW_KO[i];
+  }
+  // opt.near: 이 날짜와 가까운 후보를 앞에(예: 같은 모델의 전 일지 다음 날)
+  function dateWeekdayCheck(date, dowText, opt) {
+    opt = opt || {};
+    var d = parseDate(date), w = normDow(dowText);
+    if (!d || !w) return { mismatch: false, date: d, written: w, actual: d ? weekdayKo(d) : '', candidates: [] };
+    var actual = weekdayKo(d);
+    if (actual === w) return { mismatch: false, date: d, written: w, actual: actual, candidates: [] };
+    var p = d.split('-'), y = +p[0], m = +p[1], day = String(+p[2]);
+    var vars = {};
+    function add(x) { var n = +x; if (x !== '' && n >= 1 && n <= 31) vars[n] = true; }
+    if (day.length === 2) { add(day.charAt(0)); add(day.charAt(1)); add(day.charAt(1) + day.charAt(0)); }
+    else { add(day + '0'); ['1', '2', '3'].forEach(function (a) { add(a + day); }); }
+    // 한 자리를 비슷한 숫자로 잘못 읽은 경우(1↔7, 3↔8, 5↔6, 0↔6·8·9)
+    var LOOK = { '1': '7', '7': '1', '3': '8', '8': '30', '5': '6', '6': '50', '0': '689', '9': '0' };
+    day.split('').forEach(function (ch, i) {
+      (LOOK[ch] || '').split('').forEach(function (r) { add(day.slice(0, i) + r + day.slice(i + 1)); });
+    });
+    var cands = Object.keys(vars).map(function (n) { return validYmd(y, m, +n) ? ymd(y, m, +n) : null; })
+      .filter(function (c) { return c && c !== d && weekdayKo(c) === w; });
+    var ref = parseDate(opt.near) || d;
+    function dist(c) { return Math.abs(new Date(c) - new Date(ref)); }
+    cands.sort(function (a, b) { return dist(a) - dist(b) || (a < b ? -1 : 1); });
+    return { mismatch: true, date: d, written: w, actual: actual, candidates: cands,
+      msg: '작성일 ' + d.slice(5).replace('-', '/') + '은 ' + actual + '요일인데 일지에는 「' + w + '」요일로 적혀 있습니다' +
+        (cands.length ? ' — 요일이 맞는 날: ' + cands.map(function (c) { return c.slice(5).replace('-', '/'); }).join(', ') : ' — 날짜 숫자를 다시 확인해 주세요') };
   }
 
   // ── 모델 정보(시험일지 정리 엑셀 머리 부분) ─────────────────
@@ -1137,52 +1191,107 @@
   }
 
   // ── 기성처리 ② 연료비 정산(개발장비 내구시험 연료 주입 청구서) ─────
-  // 모델·연료별: 기간 사용량 합계 × 단가(원/kg 또는 원/L), 원 단위 반올림. 청구서 표기는 VAT 포함 금액.
+  // 정산 방식은 연료마다 다릅니다(수강생 답 09-30):
+  //  - 경유·요소수: 「오피넷의 월 평균 단가를 사용하지 않고 주입 시 주유소 카드 결재 금액으로 처리」
+  //    → 일지에 적은 결제 금액(fuel_won·urea_won, VAT 포함)을 그대로 더합니다. 리터당 단가를 곱하지 않습니다.
+  //  - LPG: 「월단위로 결제… 오피넷의 월평균 단가로 사용량을 곱하여 계산하므로 일지에 사용량만 기재」
+  //    → 기간 사용량을 달별로 나눠 그달 단가(원/kg)를 곱하고 원 단위 반올림해 더합니다.
+  //    기간을 직접 정하므로(예: 05.27 ~ 06.30) 두 달에 걸칠 수 있어 달별로 계산합니다.
+  var RECEIPT = { '경유': { qty: 'fuel_qty', won: 'fuel_won' } };
+  RECEIPT[UREA] = { qty: 'urea_l', won: 'urea_won' };
   function fuelBillingLines(rows, masters, from, to) {
     var out = [];
     unitList(rows, masters).forEach(function (u) {
       var mine = rowsOfUnit(rows, u.key).filter(function (r) { return r.date && r.date <= to; });
-      var inP = mine.filter(function (r) { return r.date >= from; });
+      var inP = sortLogs(mine.filter(function (r) { return r.date >= from; }));
       if (!inP.length) return;
       var cum = mine.reduce(function (s, r) { var h = effectiveHours(r); return h > 0 ? r2(s + h) : s; }, 0);
       var month = inP.reduce(function (s, r) { var h = effectiveHours(r); return h > 0 ? r2(s + h) : s; }, 0);
+      var base = { key: u.key, label: u.label, project: u.project, cum: cum, month: month, first: inP[0].date, last: inP[inP.length - 1].date };
       FUELS.forEach(function (f) {
-        var qty = 0, bottles = 0, logs = 0;
+        var l = Object.assign({}, base, { fuel: f.key, unit: fuelUnit(f.key), qty: 0, bottles: 0, byMonth: {}, won: 0, fills: 0, noWon: [] });
+        var logs = 0;
         inP.forEach(function (r) {
           var fuel = r.fuel_type || u.fuel;
           if (fuel !== f.key) return;
           logs++;
-          if (r.fuel_qty > 0) qty = r2(qty + r.fuel_qty);
-          if (r.lpg_bottles > 0) bottles = r2(bottles + r.lpg_bottles);
+          if (r.fuel_qty > 0) {
+            l.qty = r2(l.qty + r.fuel_qty);
+            var ym = monthOf(r.date);
+            l.byMonth[ym] = r2((l.byMonth[ym] || 0) + r.fuel_qty);
+          }
+          if (r.lpg_bottles > 0) l.bottles = r2(l.bottles + r.lpg_bottles);
+          if (f.key === '경유') {
+            if (r.fuel_won > 0) { l.won += Math.round(r.fuel_won); l.fills++; }
+            else if (r.fuel_qty > 0) l.noWon.push(r.date + (r.shift ? ' ' + r.shift : ''));
+          }
         });
-        if (qty > 0 || (u.fuel === f.key && logs)) {
-          out.push({ key: u.key, label: u.label, project: u.project, fuel: f.key, unit: fuelUnit(f.key), cum: cum, month: month, qty: qty, bottles: bottles });
-        }
+        if (l.qty > 0 || l.won > 0 || (u.fuel === f.key && logs)) out.push(l);
       });
-      // 요소수: 모델에 따라 들어가며 청구 대상(수강생 답 09-29 오후) — 연료와 따로 한 줄
-      var urea = inP.reduce(function (s, r) { return r.urea_l > 0 ? r2(s + r.urea_l) : s; }, 0);
-      if (urea > 0) out.push({ key: u.key, label: u.label, project: u.project, fuel: UREA, unit: 'L', cum: cum, month: month, qty: urea, bottles: 0 });
+      // 요소수: 모델에 따라 들어가며 청구 대상(수강생 답 09-29 오후) — 연료와 따로 한 줄, 결제 금액으로 정산
+      var ul = Object.assign({}, base, { fuel: UREA, unit: 'L', qty: 0, bottles: 0, byMonth: {}, won: 0, fills: 0, noWon: [] });
+      inP.forEach(function (r) {
+        if (r.urea_l > 0) ul.qty = r2(ul.qty + r.urea_l);
+        if (r.urea_won > 0) { ul.won += Math.round(r.urea_won); ul.fills++; }
+        else if (r.urea_l > 0) ul.noWon.push(r.date + (r.shift ? ' ' + r.shift : ''));
+      });
+      if (ul.qty > 0 || ul.won > 0) out.push(ul);
     });
     return out;
   }
-  // prices: { LPG: { price, unit, source, checked }, 경유: {...} } · opts.bottleKg: LPG 통당 kg(비고 「62통」 계산)
+  // prices: { LPG: { price } } — 달별 단가가 없을 때 쓰는 기간 공통 LPG 단가(선택)
+  // opts: { lpgMonthly: { 'YYYY-MM': { price, source, checked } }, bottleKg }
+  // 결과 missingPrice: 금액을 못 낸 까닭 목록(예: 「LPG 2025-06 단가」, 「경유 결제 금액(빈 주입 2건)」)
+  function lpgPriceOf(ym, prices, opts) {
+    var m = opts && opts.lpgMonthly && opts.lpgMonthly[ym];
+    var p = m ? parseNum(m.price) : null;
+    if (p > 0) return p;
+    p = prices && prices.LPG ? parseNum(prices.LPG.price) : null;
+    return p > 0 ? p : null;
+  }
   function calcFuelBilling(lines, prices, opts) {
     prices = prices || {}; opts = opts || {};
     var bottleKg = parseNum(opts.bottleKg) || 15;
-    var missing = {};
+    var missing = [];
+    function miss(s) { if (missing.indexOf(s) < 0) missing.push(s); }
     var t = { qty: {}, amount: 0 };
     var out = lines.map(function (l) {
-      var p = prices[l.fuel] ? parseNum(prices[l.fuel].price) : null;
-      var amount = null;
-      if (l.qty > 0 && !(p > 0)) missing[l.fuel] = true;
-      else amount = l.qty > 0 ? Math.round(r4(l.qty * p)) : 0;
+      var amount = null, price = null, parts = [], basis = '';
+      if (l.fuel === 'LPG') {
+        basis = 'monthly';
+        var months = Object.keys(l.byMonth || {}).sort();
+        if (!months.length && l.qty > 0) months = [''];
+        var ok = true, sum = 0, ps = {};
+        months.forEach(function (ym) {
+          var q = ym ? l.byMonth[ym] : l.qty;
+          var p = lpgPriceOf(ym, prices, opts);
+          if (!(p > 0)) { ok = false; miss(ym ? 'LPG ' + ym + ' 단가' : 'LPG'); parts.push({ month: ym, qty: q, price: null, amount: null }); return; }
+          var a = Math.round(r4(q * p));
+          sum += a; ps[p] = true;
+          parts.push({ month: ym, qty: q, price: p, amount: a });
+        });
+        amount = ok ? sum : null;
+        var pk = Object.keys(ps);
+        price = pk.length === 1 && ok ? +pk[0] : null;
+      } else if (l.won !== undefined) {
+        // 경유·요소수 — 결제 금액 합계. 금액이 빈 주입이 있으면 부분 합계만 보이고 청구 합계는 막습니다.
+        basis = 'receipt';
+        amount = l.won;
+        if (l.noWon && l.noWon.length) miss(l.fuel + ' 결제 금액(빈 주입 ' + l.noWon.length + '건)');
+      } else {
+        // (예전 방식으로 만든 줄 — 단가 × 사용량)
+        var p0 = prices[l.fuel] ? parseNum(prices[l.fuel].price) : null;
+        if (l.qty > 0 && !(p0 > 0)) miss(l.fuel); else amount = l.qty > 0 ? Math.round(r4(l.qty * p0)) : 0;
+        price = p0;
+      }
       var note = '';
       if (l.fuel === 'LPG' && l.qty > 0) note = fmtNum(l.bottles > 0 ? l.bottles : l.qty / bottleKg, l.bottles > 0 || (l.qty / bottleKg) % 1 === 0 ? 0 : 1) + '통';
+      else if (basis === 'receipt' && l.fills) note = '카드 결제 ' + l.fills + '회';
       t.qty[l.fuel] = r2((t.qty[l.fuel] || 0) + l.qty);
       if (amount != null) t.amount += amount;
-      return Object.assign({}, l, { price: p, amount: amount, note: note });
+      return Object.assign({}, l, { price: price, amount: amount, note: note, basis: basis, parts: parts });
     });
-    return { lines: out, totals: t, missingPrice: Object.keys(missing) };
+    return { lines: out, totals: t, missingPrice: missing };
   }
   function fuelBillingSheets(bill, meta, rows, masters, prices) {
     meta = meta || {}; prices = prices || {};
@@ -1194,43 +1303,86 @@
       ['■ 개발장비 내구시험 연료 주입 청구서', '', '', '', '', '', '결재', appr[0] || '', appr[1] || '', appr[2] || ''],
       ['1. 모델별 청구 금액', '', '', '', '', '', '', '', '', ''],
       ['2. 기간 : ' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to), '', '', '', '', '', '', '', '', ''],
-      ['3. 주유 금액 : ' + (bill.missingPrice.length ? '(단가 미입력: ' + bill.missingPrice.join(', ') + ')' : won(t.amount)) + ' (VAT 포함)', '', '', '', '', '', '', '/', '/', '/'],
+      ['3. 주유 금액 : ' + (bill.missingPrice.length ? '(빈 칸: ' + bill.missingPrice.join(', ') + ')' : won(t.amount)) + ' (VAT 포함)', '', '', '', '', '', '', '/', '/', '/'],
       ['4. 주유 내역', '', '', '', '', '', '', '', '', meta.team || ''],
-      ['순', '기종', '유종', '장비 가동(h, cycle)', '', '가스/경유/요소수 사용량(LPG kg · 경유·요소수 L)', '단가(원/kg·원/L)', '금액(원)', '과제번호', '비고'],
+      ['순', '기종', '유종', '장비 가동(h)', '', '가스/경유/요소수 사용량(LPG kg · 경유·요소수 L)', '단가(원/kg)', '금액(원)', '과제번호', '비고'],
       ['', '', '', '총누적', '금월', '', '', '', '', '']
     ];
     var merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }, { s: { r: 5, c: 3 }, e: { r: 5, c: 4 } }];
     [0, 1, 2, 5, 6, 7, 8, 9].forEach(function (c) { merges.push({ s: { r: 5, c: c }, e: { r: 6, c: c } }); });
     bill.lines.forEach(function (l, i) {
-      aoa.push([i + 1, l.label, l.fuel, l.cum, l.month, l.qty, l.price == null ? '' : l.price, l.amount == null ? '단가 없음' : l.amount, l.project || '', l.note]);
+      aoa.push([i + 1, l.label, l.fuel, l.cum, l.month, l.qty, l.basis === 'receipt' ? '-' : l.price == null ? (l.parts && l.parts.length > 1 ? '월별' : '') : l.price,
+        l.amount == null ? '단가 없음' : l.amount, l.project || '', l.note]);
     });
     aoa.push(['계', '', '', '', '-', qtyTotal, '-', bill.missingPrice.length ? '' : t.amount, '', 'VAT 포함']);
     merges.push({ s: { r: aoa.length - 1, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
-    aoa.push(['※ ' + (meta.fuelNote || '가스 사용량은 1개월 사용량에 대해 월 평균 가격을 기준으로 정산합니다.')], [],
-      ['[ 유첨 ]'], ['  1) 기종별 연료 주입 현황 : ' + bill.lines.length + '매'], ['  2) 연료 단가 결정 내역(단가 시트) : 1매']);
+    var has = {}; bill.lines.forEach(function (l) { has[l.fuel] = true; });
+    if (has['경유'] || has[UREA]) aoa.push(['※ 경유·요소수는 주입할 때 주유소에서 카드로 결제한 금액(VAT 포함)으로 정산합니다(리터당 단가를 곱하지 않음).']);
+    if (has.LPG) aoa.push(['※ 가스(LPG) 사용량은 기간 사용량에 오피넷 월 평균 가격을 곱해 정산하며, 월 말 카드 결제합니다.']);
+    if (meta.fuelNote) aoa.push(['※ ' + meta.fuelNote]);
+    var unitKeys = [];
+    bill.lines.forEach(function (l) { if (unitKeys.indexOf(l.key) < 0) unitKeys.push(l.key); });
+    var ledgers = ['LPG', '경유'].filter(function (k) { return has[k]; });
+    aoa.push([], ['[ 유첨 ]'], ['  1) 기종별 연료 주입 현황 : ' + unitKeys.length + '매']);
+    if (ledgers.length) aoa.push(['  2) ' + ledgers.join(' / ') + ' 대장 : 각 1매 (입고·주유 대장 스캔본을 따로 첨부)']);
+    if (has.LPG) aoa.push(['  ' + (ledgers.length ? 3 : 2) + ') LPG 단가 결정 내역(단가 시트) : 1매']);
     var sheets = { '청구서': { aoa: aoa, merges: merges } };
     var used = { '청구서': true, '단가': true };
-    bill.lines.forEach(function (l) {
-      var isUrea = l.fuel === UREA;
-      var d = [[l.label + ' ' + (isUrea ? '요소수' : '연료') + ' 주입 현황 (' + dotDate(meta.from) + ' ~ ' + dotDate(meta.to) + ')'], [],
-        ['Date', '주/야/휴', '일 가동시간(h)', l.fuel + ' 사용량(' + l.unit + ')', isUrea ? '' : 'LPG 통 수', '운전자 Code']];
-      sortLogs(rowsOfUnit(rows, l.key)).forEach(function (r) {
-        if (!r.date || r.date < meta.from || r.date > meta.to) return;
-        var h = effectiveHours(r);
-        if (isUrea) {
-          if (r.urea_l > 0) d.push([r.date, r.shift || '', h == null ? '' : h, r.urea_l, '', r.driver || '']);
-          return;
+    // 기종별 연료 주입 현황 — 받은 양식처럼 기종 한 장에 기간 안 가동 일지 전부(주유한 날에 사용량·금액)
+    unitKeys.forEach(function (key) {
+      var ls = bill.lines.filter(function (l) { return l.key === key; });
+      var main = ls.filter(function (l) { return l.fuel !== UREA; })[0];
+      var urea = ls.filter(function (l) { return l.fuel === UREA; })[0];
+      var isLpg = main && main.fuel === 'LPG';
+      var fuelName = main ? main.fuel : '경유';
+      var m = (masters || {})[key] || { model: key.split('|')[0], unit_no: key.split('|')[1] };
+      var sum = unitSummary(rows, m, { to: meta.to });
+      var lines = sum.lines.filter(function (x) { return x.date >= meta.from; });
+      var total = ls.reduce(function (s, l) { return l.amount == null ? s : s + l.amount; }, 0);
+      var incomplete = ls.some(function (l) { return l.amount == null || (l.noWon && l.noWon.length); });
+      var d = [['기종별 연료 주입 현황'],
+        ['1. 모델 : ' + ls[0].label],
+        ['2. 기간 : ' + dotDate(ls[0].first) + ' ~ ' + dotDate(ls[0].last)],
+        ['3. 주유 금액 : ' + (incomplete ? '(빈 칸 있음) ' : '') + won(total) + ' (VAT 포함)'],
+        ['4. 기성내역'],
+        ['가동 일자', '주간/야간/휴일', '장비 가동(h) 총누적', '금월', isLpg ? 'LPG(kg)' : fuelName + ' ℓ', '요소수 ℓ', isLpg ? '단가(원/kg)' : '단가', '금액(원)', '비고']];
+      lines.forEach(function (x) {
+        var r = rows.find(function (y) { return y.id === x.id; }) || {};
+        var fq = x.fuel === fuelName && r.fuel_qty > 0 ? r.fuel_qty : '';
+        var amt = '';
+        var note = [];
+        if (!isLpg) {
+          var a = (r.fuel_won > 0 ? Math.round(r.fuel_won) : 0) + (r.urea_won > 0 ? Math.round(r.urea_won) : 0);
+          if (a) amt = a;
+          if (r.urea_won > 0 && r.fuel_won > 0) note.push('요소수 ' + fmtNum(r.urea_won, 0) + '원 포함');
+          if ((r.fuel_qty > 0 && !(r.fuel_won > 0)) || (r.urea_l > 0 && !(r.urea_won > 0))) note.push('결제 금액 빈 칸');
         }
-        var fuel = r.fuel_type || (normMaster((masters || {})[l.key]).fuel) || l.fuel;
-        if (fuel !== l.fuel) return;
-        if (!(r.fuel_qty > 0) && !(r.lpg_bottles > 0)) return;
-        d.push([r.date, r.shift || '', h == null ? '' : h, r.fuel_qty == null ? '' : r.fuel_qty, r.lpg_bottles == null ? '' : r.lpg_bottles, r.driver || '']);
+        if (r.lpg_bottles > 0) note.push(fmtNum(r.lpg_bottles) + '통');
+        d.push([x.date.slice(5), x.shift, x.cum, x.hours == null ? '' : x.hours, fq, r.urea_l > 0 ? r.urea_l : '', '', amt, note.join(', ')]);
       });
-      d.push(['합계', '', l.month, l.qty, l.bottles || '', '']);
-      sheets[sheetName(l.label + (isUrea ? ' 요소수' : ''), used)] = { aoa: d };
+      if (main) {
+        d.push(['소계 (' + fuelName + ', VAT 포함)', '', '', main.month, main.qty, '', isLpg ? (main.price == null ? (main.parts.length > 1 ? '월별' : '') : main.price) : '-', main.amount == null ? '' : main.amount, main.note]);
+        if (isLpg && main.parts.length > 1) main.parts.forEach(function (p) {
+          d.push(['  LPG ' + p.month, '', '', '', p.qty, '', p.price == null ? '단가 없음' : p.price, p.amount == null ? '' : p.amount, '']);
+        });
+      }
+      d.push(['소계 (요소수, VAT 포함)', '', '', main ? '' : ls[0].month, '', urea ? urea.qty : 0, '-', urea ? urea.amount : 0, urea ? urea.note : '']);
+      d.push(['합계(VAT 포함)', '', '', '', '', '', '', incomplete ? '' : total, incomplete ? '빈 칸을 채우면 계산됩니다' : '']);
+      sheets[sheetName(ls[0].label, used)] = { aoa: d };
     });
-    var pr = [['연료', '단가(원)', '단위', '가격 출처', '조회일']];
-    BILL_ITEMS.forEach(function (k) { var p = prices[k] || {}; pr.push([k, p.price == null ? '' : p.price, '원/' + fuelUnit(k), p.source || '', p.checked || '']); });
+    // 단가 시트 — LPG 는 달별 오피넷 월평균, 경유·요소수는 결제 금액이라 단가가 없습니다
+    var pr = [['구분', '월', '단가(원)', '단위', '가격 출처', '조회일']];
+    var lpgMonths = {};
+    bill.lines.forEach(function (l) { if (l.fuel === 'LPG') Object.keys(l.byMonth || {}).forEach(function (ym) { lpgMonths[ym] = true; }); });
+    var lm = Object.keys(lpgMonths).sort();
+    if (!lm.length && prices.LPG) lm = [''];
+    lm.forEach(function (ym) {
+      var mp = (meta.lpgMonthly && meta.lpgMonthly[ym]) || (prices.LPG || {});
+      var p = lpgPriceOf(ym, prices, { lpgMonthly: meta.lpgMonthly });
+      pr.push(['LPG', ym || dotDate(meta.from) + ' ~ ' + dotDate(meta.to), p == null ? '' : p, '원/kg', mp.source || '오피넷 월 평균', mp.checked || '']);
+    });
+    pr.push(['경유', '-', '-', '-', '주입 때 주유소 카드 결제 금액(영수증)으로 정산 — 단가 없음', '']);
+    pr.push([UREA, '-', '-', '-', '주입 때 주유소 카드 결제 금액(영수증)으로 정산 — 단가 없음', '']);
     sheets['단가'] = { aoa: pr };
     return sheets;
   }
@@ -1256,12 +1408,28 @@
     });
     return lines.sort().join('\n');
   }
+  // 회사 휴무일 초안 — 수강생 답(09-29): 「회사 휴무일은 휴가, 근로자의날도 포함」. 일반 달력(공휴일 목록)에 더해 씁니다.
+  // 근로자의 날만 날짜가 정해져 있어 넣어 두고, 휴가(하계·동계 등)는 회사 달력을 보고 「시작~끝 이름」으로 더합니다.
+  function defaultCompanyHolidayText(years) {
+    return (years || []).map(function (y) { return y + '-05-01 근로자의 날'; }).join('\n');
+  }
   // 「2026-09-24 추석 연휴」 「2026.9.24, 추석」 등 → { map: { 'YYYY-MM-DD': 이름 }, bad: [못 읽은 줄] }
+  // 휴가처럼 여러 날이면 「2026-08-03~2026-08-07 하계 휴가」 또는 「2026-08-03~08-07 하계 휴가」(최대 62일)
+  var DATE_RE = '(\\d{4}[-./]\\s*\\d{1,2}[-./]\\s*\\d{1,2})';
   function parseHolidays(textIn) {
     var map = {}, bad = [];
     String(textIn == null ? '' : textIn).split(/\r?\n/).forEach(function (line) {
       var s = line.replace(/#.*$/, '').trim();
       if (!s) return;
+      var rg = s.match(new RegExp('^' + DATE_RE + '\\.?\\s*[~～]\\s*((?:\\d{4}[-./]\\s*)?\\d{1,2}[-./]\\s*\\d{1,2})\\.?\\s*[,\\t ]?\\s*(.*)$'));
+      if (rg) {
+        var a = parseDate(rg[1].replace(/\s/g, ''));
+        var bs = rg[2].replace(/\s/g, '');
+        var b = a ? parseDate(/^\d{4}/.test(bs) ? bs : a.slice(0, 4) + '-' + bs.replace(/[./]/g, '-')) : null;
+        if (!a || !b || b < a || addDays(a, 62) < b) { bad.push(line); return; }
+        for (var d = a; d <= b; d = addDays(d, 1)) map[d] = (rg[3] || '').trim() || '회사 휴무';
+        return;
+      }
       var m = s.match(/^(\d{4}[-./]\s*\d{1,2}[-./]\s*\d{1,2})\.?\s*[,\t ]?\s*(.*)$/);
       var d = m ? parseDate(m[1].replace(/\s/g, '')) : null;
       if (!d) { bad.push(line); return; }
@@ -1334,7 +1502,7 @@
   // 「마지막 날은 근무 끝나기 전에 가동시간, 연료사용량 등 기성에 필요한 값만 미리 입력하여 마감하고, 가동 후 추가 데이터 업데이트」
   // 가입력으로 저장하면 그 값을 estimate 에 남기고, 확정 저장하면 estimate 는 그대로 둔 채 provisional 을 끕니다.
   // 그래서 「마감 때 낸 값」과 「확정 값」의 차이를 나중에도 보여 줄 수 있습니다.
-  var PROVISIONAL_KEYS = ['run_hours', 'hour_end', 'inspect_h', 'battery_check_h', 'special_h', 'fuel_qty', 'lpg_bottles', 'urea_l'];
+  var PROVISIONAL_KEYS = ['run_hours', 'hour_end', 'inspect_h', 'battery_check_h', 'special_h', 'fuel_qty', 'lpg_bottles', 'urea_l', 'fuel_won', 'urea_won'];
   var PROVISIONAL_LABELS = { lpg_bottles: 'LPG 통 수' };
   function provLabel(k) { return PROVISIONAL_LABELS[k] || FIELD[k].label; }
   function snapshotEstimate(row) {
@@ -1418,7 +1586,7 @@
   }
 
   // 마감 준비 체크리스트 — 마지막 날 하루에 몰리지 않게, 기간 중 매일 보면서 미리 채웁니다.
-  // input: { rows, masters, from, to, cutoff, today, holidays, rate, prices, bottleKg }
+  // input: { rows, masters, from, to, cutoff, today, holidays, rate, prices, lpgMonthly, bottleKg }
   // 결과: [{ key, label, state: 'ok' | 'todo' | 'wait', detail }]
   function closingChecklist(input) {
     var hol = input.holidays || {};
@@ -1448,8 +1616,8 @@
     item('holiday', '휴일 근무는 토요일 주간만', holWarn ? 'todo' : 'ok', holWarn ? holWarn + '건 확인' : '');
     // 4. 단가
     item('rate', '운전시간 단가 입력', parseNum(input.rate) > 0 ? 'ok' : 'todo', '');
-    var fb = calcFuelBilling(fuelBillingLines(rows, input.masters, from, to), input.prices, { bottleKg: input.bottleKg });
-    item('prices', '연료·요소수 단가 입력', fb.missingPrice.length ? 'todo' : 'ok', fb.missingPrice.join(', '));
+    var fb = calcFuelBilling(fuelBillingLines(rows, input.masters, from, to), input.prices, { bottleKg: input.bottleKg, lpgMonthly: input.lpgMonthly });
+    item('prices', '경유·요소수 결제 금액 · LPG 월 단가 입력', fb.missingPrice.length ? 'todo' : 'ok', fb.missingPrice.join(', '));
     // 5. 과제번호
     var noProj = unitList(rows, input.masters).filter(function (u) { return byUnit[u.key] && !u.project; }).map(function (u) { return u.label; });
     item('project', '모델 정보에 과제번호', noProj.length ? 'todo' : 'ok', noProj.join(', '));
@@ -1486,13 +1654,15 @@
     unitSummary: unitSummary, summarySheet: summarySheet,
     weeklyReport: weeklyReport, weeklyMail: weeklyMail, progressSvg: progressSvg,
     hourBillingLines: hourBillingLines, calcHourBilling: calcHourBilling, hourBillingStatus: hourBillingStatus, hourBillingSheets: hourBillingSheets,
-    fuelBillingLines: fuelBillingLines, calcFuelBilling: calcFuelBilling, fuelBillingSheets: fuelBillingSheets,
+    fuelBillingLines: fuelBillingLines, calcFuelBilling: calcFuelBilling, lpgPriceOf: lpgPriceOf, fuelBillingSheets: fuelBillingSheets,
     // 2026-09-29 오후 늦게 — 휴일·기성 마감·가입력/확정
     defaultHolidayText: defaultHolidayText, parseHolidays: parseHolidays, dayKind: dayKind, isWorkday: isWorkday, billShift: billShift,
-    holidayWorkIssues: holidayWorkIssues, lastWorkday: lastWorkday, closingPeriodOf: closingPeriodOf, openClosingPeriod: openClosingPeriod,
+    holidayWorkIssues: holidayWorkIssues, defaultCompanyHolidayText: defaultCompanyHolidayText, lastWorkday: lastWorkday, closingPeriodOf: closingPeriodOf, openClosingPeriod: openClosingPeriod,
     shiftMonth: shiftMonth, workdaysBetween: workdaysBetween, PROVISIONAL_KEYS: PROVISIONAL_KEYS, applyProvisional: applyProvisional,
     provisionalReport: provisionalReport, asSubmitted: asSubmitted, closingDiff: closingDiff, provisionalSheet: provisionalSheet,
-    closingChecklist: closingChecklist, AI_PAGE_LIMIT: AI_PAGE_LIMIT, aiPageAllowance: aiPageAllowance, recordAiPage: recordAiPage
+    closingChecklist: closingChecklist,
+    // 2026-09-30 — 날짜·요일 대조, 결제 금액 정산, 회사 휴무일
+    normDow: normDow, dateWeekdayCheck: dateWeekdayCheck, fixSegLabel: fixSegLabel, AI_PAGE_LIMIT: AI_PAGE_LIMIT, aiPageAllowance: aiPageAllowance, recordAiPage: recordAiPage
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DLLogic = api;

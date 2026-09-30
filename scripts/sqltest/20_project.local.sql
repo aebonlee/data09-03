@@ -141,6 +141,19 @@ begin
   exception when check_violation then v_raised := true; end;
   perform public._assert(v_raised, '예상치는 객체여야 한다 (CHECK)');
 
+  -- 경유·요소수 결제 금액·일지에 적힌 요일 (09-30)
+  insert into public.journal_rows (id, date, model, fuel_qty, fuel_won, urea_l, urea_won, dow, unreadable)
+  values ('r93', '2025-05-27', 'MODEL-Z', 60, 94000, 10, 12000, '화', array['fuel_won']);
+  perform public._assert((select fuel_won = 94000 and dow = '화' from public.journal_rows where id = 'r93'), '결제 금액·요일을 저장한다');
+  v_raised := false;
+  begin insert into public.journal_rows (id, model, fuel_won) values ('r94', 'X', -1);
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '결제 금액은 음수가 될 수 없다 (CHECK)');
+  v_raised := false;
+  begin insert into public.journal_rows (id, model, dow) values ('r95', 'X', '월요일');
+  exception when check_violation then v_raised := true; end;
+  perform public._assert(v_raised, '요일은 한 글자(월~일)만 (CHECK)');
+
   insert into public.unit_masters (model, unit_no, extended) values ('MODEL-Z', '', true);
   perform public._assert((select extended and target_hours is null from public.unit_masters where model = 'MODEL-Z'),
     '특화 모델은 목표를 비워 두고 extended 로 표시할 수 있다');

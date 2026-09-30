@@ -268,3 +268,10 @@ td.diff { font-weight: 700; }
 .btn.on { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
 .ai-agree { align-items: flex-start; margin: 4px 0 10px; }
 .ai-agree input { margin-top: 3px; flex: none; }
+
+/* 2026-09-30 — 작성일 옆 「일지에 적힌 요일」, 날짜·요일 불일치 안내 */
+.pair.date-dow input { flex: 1 1 10em; }
+.pair.date-dow select { flex: 0 0 6.5em; min-height: 44px; }
+.dow-warn:empty { display: none; }
+.dow-warn { margin-top: 6px; padding: 8px 10px; border-radius: var(--radius); background: var(--warn-bg); color: #5a4400; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; word-break: keep-all; overflow-wrap: break-word; }
+.lpg-months { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 12px; }

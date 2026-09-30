@@ -266,7 +266,7 @@ const TPR = {
   cycle_h: '7.0', basic_cycles: '34', bump_cycles: '6', battery_check_h: '0.5', inspect_h: '0.5', ac_h: '', heater_h: '7.0', wheel_nut: false,
   battery: [
     { label: '기본/요철 (2hr)', start: 99, end: 70 }, { label: '기본/요철 (1hr 50분)', start: 70, end: 41 },
-    { label: '지게차 충전(정심)', start: 41, end: 84 }, { label: '기본/요철 (2hr)', start: 84, end: 64 },
+    { label: '지게차 충전(점심)', start: 41, end: 84 }, { label: '기본/요철 (2hr)', start: 84, end: 64 },
     { label: '기본/요철 (1hr 50분)', start: 64, end: 52 }, { label: '기본/요철 (50분)', start: '', end: '' }
   ],
   problems: [{ text: '', note: '' }], checks: ['무', '無', '무', 'x', '무'], coop: '', improve: ''
@@ -500,17 +500,19 @@ test('일지 → 연료 줄: 연료 칸이 비면 모델 정보의 연료, 기�
     row({ date: '2026-08-03', model: 'G', driver: 'a', run_hours: 7, fuel_qty: 45 }),
     row({ date: '2026-08-05', model: 'G', driver: 'a', run_hours: 6, fuel_type: 'LPG', fuel_qty: 30 }),
     row({ date: '2026-09-01', model: 'G', driver: 'a', run_hours: 6, fuel_qty: 99 }),
-    row({ date: '2026-08-05', model: 'D', driver: 'a', run_hours: 6, fuel_type: '경유', fuel_qty: 150.5, urea_l: 20 })
+    row({ date: '2026-08-05', model: 'D', driver: 'a', run_hours: 6, fuel_type: '경유', fuel_qty: 150.5, fuel_won: 225750, urea_l: 20, urea_won: 24000 })
   ];
   const ls = L.fuelBillingLines(rs, { g: { model: 'G', fuel: 'LPG' } }, '2026-08-01', '2026-08-31');
   assert.deepEqual(ls.map(l => [l.label, l.fuel, l.qty, l.month, l.cum]), [['D', '경유', 150.5, 6, 6], ['D', '요소수', 20, 6, 6], ['G', 'LPG', 75, 13, 13]]);
-  const b = L.calcFuelBilling(ls, { LPG: { price: 2000 }, '경유': { price: 1500 }, '요소수': { price: 1200 } });
-  assert.deepEqual(b.lines.map(l => [l.amount, l.note]), [[225750, ''], [24000, ''], [150000, '5통']]);
+  // 경유·요소수는 결제 금액 그대로(단가를 곱하지 않음), LPG 는 75kg × 2,000원
+  const b = L.calcFuelBilling(ls, { LPG: { price: 2000 } });
+  assert.deepEqual(b.lines.map(l => [l.amount, l.note]), [[225750, '카드 결제 1회'], [24000, '카드 결제 1회'], [150000, '5통']]);
   assert.equal(b.totals.amount, 399750); // 225,750 + 24,000 + 150,000
-  assert.deepEqual(L.calcFuelBilling(ls, { LPG: { price: 2000 }, '경유': { price: 1500 } }).missingPrice, ['요소수']);
-  const sh = L.fuelBillingSheets(b, { from: '2026-08-01', to: '2026-08-31' }, rs, {}, {});
-  assert.ok(Object.keys(sh).includes('D 요소수'));
-  assert.deepEqual(sh['단가'].aoa.map(r => r[0]), ['연료', '경유', 'LPG', '요소수']);
+  assert.deepEqual(L.calcFuelBilling(ls, {}).missingPrice, ['LPG 2026-08 단가']);
+  const sh = L.fuelBillingSheets(b, { from: '2026-08-01', to: '2026-08-31' }, rs, {}, { LPG: { price: 2000 } });
+  // 기종 한 장에 연료·요소수(받은 양식 「기종별 연료 주입 현황」처럼)
+  assert.deepEqual(Object.keys(sh), ['청구서', 'D', 'G', '단가']);
+  assert.deepEqual(sh['단가'].aoa.map(r => r[0]), ['구분', 'LPG', '경유', '요소수']);
 });
 test('숫자 표기', () => {
   assert.equal(L.fmtNum(24901176, 0), '24,901,176');
@@ -627,7 +629,7 @@ test('운전시간 청구서 과급 구분도 날짜로: 주 11h·휴 11h → 11
 });
 const PX = [
   row({ date: '2026-10-01', model: 'X', driver: 'a', shift: '주', run_hours: 8, fuel_type: '경유' }),
-  row({ date: '2026-10-30', model: 'X', driver: 'a', shift: '주', run_hours: 6, fuel_type: '경유', fuel_qty: 20 })
+  row({ date: '2026-10-30', model: 'X', driver: 'a', shift: '주', run_hours: 6, fuel_type: '경유', fuel_qty: 20, fuel_won: 30000 })
 ];
 test('마감일 가입력 → 가동 후 확정: 예상치를 남기고 차이를 보여 줌(가동 6 → 8.5h, 경유 20 → 30L)', () => {
   const pre = L.applyProvisional(PX[1], null, true, '2026-10-30');
@@ -650,7 +652,7 @@ test('마감일 가입력 → 가동 후 확정: 예상치를 남기고 차이�
 });
 test('마감 제출분 vs 확정: 금월 14 → 16.5h, 기성금액 140,000 → 165,000원, 주유 30,000 → 45,000원', () => {
   const pre = L.applyProvisional(PX[1], null, true, '2026-10-30');
-  const fin = L.applyProvisional({ ...pre, run_hours: 8.5, fuel_qty: 30 }, pre, false, '2026-11-02');
+  const fin = L.applyProvisional({ ...pre, run_hours: 8.5, fuel_qty: 30, fuel_won: 45000 }, pre, false, '2026-11-02');
   const d = L.closingDiff([PX[0], fin], {}, '2026-10-01', '2026-10-30', { holidays: HOL, rate: 10000, prices: { 경유: { price: 1500 } } });
   assert.deepEqual(d.hours, { est: 14, fin: 16.5, diff: 2.5 });
   assert.deepEqual(d.amount, { est: 140000, fin: 165000, diff: 25000 });
@@ -706,6 +708,103 @@ test('외부 AI 에 올리는 TPR 은 하루 2장까지(여러 장은 대외비)
   assert.equal(L.aiPageAllowance(log, '2026-09-29').left, 0);
   assert.equal(L.aiPageAllowance(log, '2026-09-30').ok, true);
   assert.deepEqual(L.recordAiPage(log, '2026-09-30'), { '2026-09-30': 1 });
+});
+
+console.log('2026-09-30 — 기간 직접 입력·결제 금액 정산·회사 휴무일·날짜↔요일');
+// 사진(2026-09-30 게시물): 연료 주입 청구서 기간 2025.05.27 ~ 06.30. 모델명·과제번호는 사내 정보라 가명(기종F=경유, 기종G=LPG).
+// 경유 기종: 주입 12회, 카드 결제 금액 합계 3,137,560원 · 2,020ℓ · 금월 359.5h(총누적 373.0 — 기간 전 13.5h)
+const DIESEL = [
+  ['05-27', '주', 9.5, 60, 94000], ['05-27', '야', 9.5], ['05-28', '주', 9.5, 207, 322000], ['05-28', '야', 9.5], ['05-29', '주', 8], ['05-29', '야', 9.5],
+  ['05-30', '주', 9.5, 196, 306000], ['05-30', '야', 9.5], ['06-02', '주', 9.5], ['06-02', '야', 9.5], ['06-04', '주', 9.5, 254, 394000], ['06-04', '야', 9.5],
+  ['06-05', '주', 9.5], ['06-05', '야', 9.5], ['06-09', '주', 9.5, 105, 163000], ['06-09', '야', 9.5], ['06-10', '주', 9.5], ['06-10', '야', 9.5],
+  ['06-11', '주', 9.5, 262, 406000], ['06-11', '야', 9.5], ['06-12', '주', 9.5], ['06-12', '야', 9.5], ['06-13', '주', 9.5, 188, 291000], ['06-13', '야', 9.5],
+  ['06-16', '주', 9.5], ['06-16', '야', 9.5], ['06-17', '주', 9.5, 40, 61560], ['06-17', '야', 9.5], ['06-18', '주', 9.5, 239, 368000], ['06-18', '야', 9.5],
+  ['06-19', '주', 9.5], ['06-19', '야', 9.5], ['06-20', '주', 0, 223, 343000], ['06-24', '야', 9.5], ['06-25', '주', 9.5, 77, 122000], ['06-25', '야', 9.5],
+  ['06-26', '주', 9.5], ['06-26', '야', 9.5], ['06-27', '주', 9.5, 169, 267000]
+];
+// LPG 기종: 교대마다 kg 사용량만 적음. 525kg × 오피넷 6월 평균 2,484원/kg = 1,304,100원, 35통
+const LPGD = [
+  ['06-17', '주', 0, 15], ['06-18', '주', 9, 30], ['06-18', '야', 9, 30], ['06-19', '주', 9, 30], ['06-19', '야', 9, 45], ['06-20', '주', 9, 15], ['06-20', '야', 9, 30],
+  ['06-23', '주', 9, 30], ['06-23', '야', 9, 45], ['06-24', '주', 9, 30], ['06-24', '야', 2, 15], ['06-25', '주', 4, 30], ['06-25', '야', 2, 30],
+  ['06-26', '주', 9, 15], ['06-26', '야', 6, 30], ['06-27', '주', 2, 15], ['06-27', '야', 7.5, 30], ['06-30', '주', 2, 30], ['06-30', '야', 2, 30]
+];
+const FROWS = [row({ date: '2025-05-20', model: '기종F', unit_no: '#1', driver: 'a', shift: '주', run_hours: 13.5, fuel_type: '경유' })]
+  .concat(DIESEL.map(([d, sh, h, q, w]) => row({ date: '2025-' + d, model: '기종F', unit_no: '#1', driver: 'a', shift: sh, run_hours: h, fuel_type: '경유', fuel_qty: q, fuel_won: w })))
+  .concat(LPGD.map(([d, sh, h, q]) => row({ date: '2025-' + d, model: '기종G', unit_no: '#1', driver: 'b', shift: sh, run_hours: h, fuel_type: 'LPG', fuel_qty: q })));
+const LPG_M = { '2025-06': { price: '2,484', source: '오피넷 월 평균' } };
+test('사진 재현: 경유 3,137,560원(결제 금액 합) + LPG 525kg × 2,484 = 1,304,100원 → 4,441,660원 · 35통', () => {
+  const ls = L.fuelBillingLines(FROWS, {}, '2025-05-27', '2025-06-30');
+  const b = L.calcFuelBilling(ls, {}, { lpgMonthly: LPG_M });
+  assert.deepEqual(b.lines.map(l => [l.label, l.fuel, l.cum, l.month, l.qty, l.amount, l.note]),
+    [['기종F #1', '경유', 373, 359.5, 2020, 3137560, '카드 결제 12회'], ['기종G #1', 'LPG', 117.5, 117.5, 525, 1304100, '35통']]);
+  assert.equal(b.lines[1].price, 2484);
+  assert.equal(b.totals.amount, 4441660);
+  assert.deepEqual(b.missingPrice, []);
+  const sh = L.fuelBillingSheets(b, { from: '2025-05-27', to: '2025-06-30', lpgMonthly: LPG_M }, FROWS, {}, {});
+  const a = sh['청구서'].aoa;
+  assert.equal(a[3][0], '3. 주유 금액 : ₩4,441,660 (VAT 포함)');
+  assert.deepEqual(a.find(r => r[0] === 1).slice(5, 8), [2020, '-', 3137560]);  // 경유는 단가 칸 「-」
+  // 기종별 현황: 기종의 실제 첫·끝 날(경유 05.27 ~ 06.27, LPG 06.17 ~ 06.30), 소계·합계
+  const f = sh['기종F #1'].aoa;
+  assert.equal(f[2][0], '2. 기간 : 2025.05.27 ~ 2025.06.27');
+  assert.deepEqual(f.find(r => r[0] === '소계 (경유, VAT 포함)').slice(3, 8), [359.5, 2020, '', '-', 3137560]);
+  assert.deepEqual(f.find(r => r[0] === '합계(VAT 포함)')[7], 3137560);
+  const g = sh['기종G #1'].aoa;
+  assert.equal(g[2][0], '2. 기간 : 2025.06.17 ~ 2025.06.30');
+  assert.deepEqual(g.find(r => r[0] === '소계 (LPG, VAT 포함)').slice(4, 8), [525, '', 2484, 1304100]);
+  assert.deepEqual(sh['단가'].aoa[1], ['LPG', '2025-06', 2484, '원/kg', '오피넷 월 평균', '']);
+  assert.ok(a.some(r => /LPG \/ 경유 대장 : 각 1매 \(입고·주유 대장 스캔본을 따로 첨부\)/.test(r[0])));
+});
+test('LPG 가 두 달에 걸치면 달별 단가: 5월 30kg × 2,500 + 6월 45kg × 2,484 = 75,000 + 111,780 = 186,780원', () => {
+  const rs = [row({ date: '2025-05-30', model: 'H', driver: 'a', run_hours: 9, fuel_type: 'LPG', fuel_qty: 30 }),
+    row({ date: '2025-06-02', model: 'H', driver: 'a', run_hours: 9, fuel_type: 'LPG', fuel_qty: 45 })];
+  const ls = L.fuelBillingLines(rs, {}, '2025-05-27', '2025-06-30');
+  const b = L.calcFuelBilling(ls, {}, { lpgMonthly: { '2025-05': { price: 2500 }, '2025-06': { price: 2484 } } });
+  assert.equal(b.lines[0].amount, 186780);
+  assert.equal(b.lines[0].price, null); // 두 달 단가가 달라 한 값으로 적지 않음(엑셀 「월별」)
+  assert.deepEqual(L.calcFuelBilling(ls, {}, { lpgMonthly: { '2025-06': { price: 2484 } } }).missingPrice, ['LPG 2025-05 단가']);
+});
+test('경유 결제 금액이 빈 주입이 있으면 합계를 막고 몇 건인지 알림(리터 × 단가로 채우지 않음)', () => {
+  const rs = [row({ date: '2025-06-02', model: 'K', driver: 'a', run_hours: 9, fuel_type: '경유', fuel_qty: 60, fuel_won: 94000 }),
+    row({ date: '2025-06-03', model: 'K', driver: 'a', run_hours: 9, fuel_type: '경유', fuel_qty: 50 }),
+    row({ date: '2025-06-03', model: 'K', driver: 'a', run_hours: 1, urea_l: 10 })];
+  const b = L.calcFuelBilling(L.fuelBillingLines(rs, {}, '2025-06-01', '2025-06-30'), { 경유: { price: 1500 } });
+  assert.deepEqual(b.missingPrice, ['경유 결제 금액(빈 주입 1건)', '요소수 결제 금액(빈 주입 1건)']);
+  assert.equal(b.lines[0].amount, 94000);
+  const list = L.closingChecklist({ rows: rs, masters: {}, from: '2025-06-01', to: '2025-06-30', today: '2025-07-01', rate: 1 });
+  assert.equal(list.find(i => i.key === 'prices').state, 'todo');
+});
+test('날짜 ↔ 요일: 1/30(목)인데 「금」 → 요일이 맞는 1/3 을 후보로, 맞으면 조용히', () => {
+  const c = L.dateWeekdayCheck('2025-01-30', '금');
+  assert.equal(c.mismatch, true);
+  assert.deepEqual(c.candidates, ['2025-01-03']);
+  assert.equal(L.dateWeekdayCheck('2025-01-03', '(금)').mismatch, false);
+  assert.equal(L.dateWeekdayCheck('2025-01-03', '').mismatch, false); // 요일을 안 적었으면 검사하지 않음
+  assert.deepEqual(['일요일', '(월)', 'Tue', '?'].map(L.normDow), ['일', '월', '화', '']);
+  // 3 을 8 로 읽음: 06-08(일)인데 「화」 → 06-03(화)
+  assert.deepEqual(L.dateWeekdayCheck('2025-06-08', '화').candidates, ['2025-06-03']);
+  // AI 답에 요일이 있으면 같은 검사를 경고로
+  const res = L.tprFromAi('{"date":"2025-01-30","dow":"금","model":"M"}');
+  assert.ok(res.warnings.some(w => /01\/03/.test(w)));
+  assert.equal(L.tprToRow(res.form).dow, '금');
+  assert.ok(/요일과 맞는지/.test(L.tprPrompt()));
+  // 현황 데이터 검사에도 경고로 남음
+  const vr = row({ date: '2025-01-30', model: 'M', driver: 'a', run_hours: 1 }); vr.dow = '금';
+  assert.ok(L.validateRows([vr]).some(i => i.code === 'dow_mismatch'));
+});
+test('회사 휴무일: 근로자의 날 초안 + 휴가 기간(시작~끝) → 휴일 판정·마감일에 반영', () => {
+  assert.equal(L.defaultCompanyHolidayText([2026]), '2026-05-01 근로자의 날');
+  const p = L.parseHolidays('2026-07-29~07-31 하계 휴가\n2026-05-01 근로자의 날');
+  assert.deepEqual(Object.keys(p.map), ['2026-07-29', '2026-07-30', '2026-07-31', '2026-05-01']);
+  assert.equal(L.dayKind('2026-07-30', p.map).name, '하계 휴가');
+  // 2026-07-31(금)이 휴가라 7월 마감일은 07-28(화)
+  assert.equal(L.lastWorkday(2026, 7, p.map), '2026-07-28');
+  assert.equal(L.lastWorkday(2026, 7, {}), '2026-07-31');
+  assert.deepEqual(L.parseHolidays('2026-08-10~2026-08-01 거꾸로').bad.length, 1);
+});
+test('배터리 구간 이름 「지게차 충전(정심)」 → 「(점심)」, 예전 일지도 고쳐 보임', () => {
+  assert.ok(L.BATTERY_SEGMENTS.includes('지게차 충전(점심)'));
+  assert.equal(L.rowToTpr({ battery: [{}, {}, { label: '지게차 충전(정심)', start: 41, end: 84 }] }).battery[2].label, '지게차 충전(점심)');
 });
 
 console.log('\n' + passed + '개 통과' + (process.exitCode ? ' · 실패 있음' : ''));

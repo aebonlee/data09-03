@@ -83,7 +83,7 @@ alter table public.journal_rows drop constraint if exists journal_rows_unreadabl
 alter table public.journal_rows add  constraint journal_rows_unreadable_check
   check (unreadable <@ array['date','hour_start','hour_end','run_hours','charge_h','cycle_h','basic_cycles','bump_cycles',
                              'battery_check_h','inspect_h','special_h','heater_h','ac_h',
-                             'battery_pct','charge_kwh','fuel_qty','urea_l']::text[]);
+                             'battery_pct','charge_kwh','fuel_qty','urea_l','fuel_won','urea_won']::text[]);
 
 -- 2026-09-29 오후 늦게 수강생 답: 마감일(근무일 기준 월 말일)에는 기성 값만 가입력하고 가동 후 확정한다.
 --   provisional = 아직 가입력(예상치) · estimate = 가입력 때 낸 값(확정 뒤에도 차이 대조용으로 남김) · confirmed_at = 확정일
@@ -95,6 +95,17 @@ alter table public.journal_rows add  constraint journal_rows_estimate_check chec
 -- 가입력인데 예상치가 없으면 대조할 수 없다
 alter table public.journal_rows drop constraint if exists journal_rows_provisional_check;
 alter table public.journal_rows add  constraint journal_rows_provisional_check check (not provisional or estimate is not null);
+
+-- 2026-09-30 수강생 답: 「경유와 요소수는 오피넷의 월 평균 단가를 사용하지 않고 주입 시 주유소 카드 결재 금액으로 처리」
+--   fuel_won·urea_won = 주입 때 결제 금액(원, VAT 포함). LPG 는 사용량만 적고 단가는 fuel_prices(그달 'LPG')의 오피넷 월평균.
+--   dow = 일지에 적힌 요일(손글씨 날짜를 잘못 읽었는지 대조용, 수강생 제안)
+alter table public.journal_rows add column if not exists fuel_won numeric(12,0);
+alter table public.journal_rows add column if not exists urea_won numeric(12,0);
+alter table public.journal_rows add column if not exists dow      text not null default '';
+alter table public.journal_rows drop constraint if exists journal_rows_won_check;
+alter table public.journal_rows add  constraint journal_rows_won_check check ((fuel_won is null or fuel_won >= 0) and (urea_won is null or urea_won >= 0));
+alter table public.journal_rows drop constraint if exists journal_rows_dow_check;
+alter table public.journal_rows add  constraint journal_rows_dow_check check (dow in ('', '월', '화', '수', '목', '금', '토', '일'));
 
 create index if not exists journal_rows_owner_date_idx on public.journal_rows (owner_id, date);
 create index if not exists journal_rows_unit_idx       on public.journal_rows (owner_id, model, unit_no, date);
